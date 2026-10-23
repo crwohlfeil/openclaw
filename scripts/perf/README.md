@@ -2964,6 +2964,20 @@ the Gateway with V8's `--no-turbo-inlining --no-maglev-inlining` flags and recor
 sampled stacks. Keep these diagnostic results separate from acceptance pairs,
 which run with normal inlining.
 
+For a balanced delivery comparison, add `--mixed-session-capabilities` with
+client and exact-subscriber counts divisible by three. It interleaves legacy,
+row-delta, and row-delta-plus-field-reference clients, including equal exact and
+roster subscribers in each cohort. The result records `sessionCapabilityCohorts`.
+This mode supports `transcript-broadcast` and `memory-soak`; omit the uniform
+`--session-row-deltas` and `--session-envelope-refs` flags.
+
+Memory-soak allocation results include `deliveredSessionEvents`, counted
+continuously in the controller from the allocation-start request through the
+allocation-stop acknowledgment. This includes receipts in cohort idle gaps and
+profile-control edges, unlike the per-round counters. Divide the whole-window
+projection allocation by this count; controller allocations are outside the
+Gateway's main-isolate profile. This counts received frames, not source publications.
+
 Use a separate `--session-projection-counts --entry src/entry.ts` pass to count
 audience cache misses, payload cache misses, successful recipient projections,
 and distinct final wire payload objects per session publication. The report's

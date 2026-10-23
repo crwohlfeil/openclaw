@@ -62,6 +62,7 @@ const { values } = parseArgs({
     "broadcast-timing": { type: "boolean", default: false },
     "session-projection-counts": { type: "boolean", default: false },
     "session-projection-source": { type: "string" },
+    "mixed-session-capabilities": { type: "boolean", default: false },
     "transport-counts": { type: "boolean", default: false },
     compressed: { type: "boolean", default: false },
     "distinct-viewers": { type: "boolean", default: false },
@@ -540,6 +541,18 @@ const recordListRequests =
 const startAt = values["start-at"] ? integer(values["start-at"], "--start-at") : undefined;
 if (values["session-envelope-refs"] && !values["session-row-deltas"]) {
   throw new Error("--session-envelope-refs requires --session-row-deltas");
+}
+if (
+  values["mixed-session-capabilities"] &&
+  ((scenario !== "transcript-broadcast" && !soakScenario) ||
+    values["session-row-deltas"] ||
+    values["session-envelope-refs"] ||
+    clientCount % 3 !== 0 ||
+    exactClients % 3 !== 0)
+) {
+  throw new Error(
+    "--mixed-session-capabilities requires transcript-broadcast or memory-soak, client/exact counts divisible by three, and no uniform row capability flags",
+  );
 }
 const promptBytes = integer(values["prompt-kib"], "--prompt-kib") * 1024;
 const promptContent = createCipheriv(
@@ -1747,6 +1760,7 @@ type FrameSizes = {
 const representativeFrames = new Map<string, FrameSizes>();
 let initialFullFrame: FrameSizes | undefined;
 const perClientCounters: Map<string, number>[] = [];
+let soakDeliveredSessionEvents: number | undefined;
 let measuring = false;
 let capturingColdSetup = values["dashboard-rpc"];
 const coldSetupRpc: Array<{
@@ -2308,6 +2322,11 @@ const connectParams = {
     ...(values["session-envelope-refs"] ? ["session-event-field-refs"] : []),
   ],
 };
+const sessionCapabilityCohorts = values["mixed-session-capabilities"]
+  ? [[], ["session-row-deltas"], ["session-row-deltas", "session-event-field-refs"]].map(
+      (caps) => ({ caps, clients: clientCount / 3, exactClients: exactClients / 3 }),
+    )
+  : undefined;
 async function controlAuthorityCounters(child: ChildProcess, action: "start" | "stop") {
   const id = randomUUID();
   const response = Promise.withResolvers<unknown>();
@@ -3253,6 +3272,12 @@ async function connectClient(index: number) {
       : {}),
     onEvent: (event) => {
       lastSubscriberEventAt = performance.now();
+      if (
+        soakDeliveredSessionEvents !== undefined &&
+        (event.event === "session.message" || event.event === "sessions.changed")
+      ) {
+        soakDeliveredSessionEvents++;
+      }
       if (event.seq !== undefined) {
         if (previousSeq !== undefined && event.seq !== previousSeq + 1) {
           subscriberFailure ??= new Error(
@@ -3356,7 +3381,16 @@ async function connectClient(index: number) {
   });
   clients[index] = client;
   await client.waitOpen();
-  const hello = await rpc(client, "connect", connectParams);
+  const hello = await rpc(
+    client,
+    "connect",
+    sessionCapabilityCohorts
+      ? {
+          ...connectParams,
+          caps: [...connectParams.caps, ...sessionCapabilityCohorts[index % 3]!.caps],
+        }
+      : connectParams,
+  );
   const handshakeElapsedMs = performance.now() - started;
   if (
     !Value.Check(HelloOkSchema, hello) ||
@@ -3916,6 +3950,7 @@ try {
   // A twenty-minute churn profile needs coarser sampling to bound native records and JSON export.
   const soakSamplingIntervalBytes = heapSamplingIntervalBytes ?? 512 * 1024;
   if (soakAllocationPath) {
+    soakDeliveredSessionEvents = 0;
     // Reading or stopping a V8 sampling profile forces GC; keep one window for the entire soak.
     await controlGatewayProfile(gateway, "heap", "start", soakAllocationPath, {
       samplingIntervalBytes: soakSamplingIntervalBytes,
@@ -4755,11 +4790,15 @@ try {
     wholeSoakAllocation = {
       ...profile,
       completedTurns,
+      deliveredSessionEvents: soakDeliveredSessionEvents,
+      deliveryCountScope:
+        "controller receipts from allocation-start request through allocation-stop acknowledgment, including cohort idle gaps and profile-control edges",
       allocatedMbPerTurn: profile.sampledAllocatedBytes / 1_000_000 / completedTurns,
       ...(values["worker-allocations"]
         ? { workerManifestPath: `${soakAllocationPath}.workers.json` }
         : {}),
     };
+    soakDeliveredSessionEvents = undefined;
   }
   let retainedProfile;
   if (soakScenario) {
@@ -4930,6 +4969,7 @@ try {
     limit,
     rowMode,
     sessionRowDeltas: values["session-row-deltas"],
+    sessionCapabilityCohorts,
     presenceDeltas: values["presence-deltas"],
     sessionEnvelopeRefs: values["session-envelope-refs"],
     listIntervalMs,
