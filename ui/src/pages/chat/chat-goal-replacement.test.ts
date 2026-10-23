@@ -86,6 +86,77 @@ it.each(["start", "set", "create", ""])(
     expect(host.chatMessage).toBe("");
   },
 );
+it("opens confirmation during an executing goal and cancels without stopping work", async () => {
+  const { host, row } = fixture();
+  row.goal.status = "active";
+  host.chatRunId = "running-goal-turn";
+  host.chatSending = true;
+  const draft = host.chatMessage;
+  const pending = dialogs.track(handleSendChat(host));
+  await answer("Cancel");
+  expect(await pending).toBe(false);
+  expect(host.chatRunId).toBe("running-goal-turn");
+  expect(host.chatMessage).toBe(draft);
+  expect(requestCalls(host.request, "sessions.abort")).toHaveLength(0);
+  expect(requestCalls(host.request, "sessions.goal.update")).toHaveLength(0);
+});
+
+it.each(["", "start", "set", "create", "structured"])(
+  "confirms a running replacement through %s",
+  async (action) => {
+    const { host, row } = fixture({
+      status: "started",
+      action: "replace",
+      goalId: goal.id,
+      runId: "resumed-turn",
+      goal: { ...goal, status: "active", objective: "Write rollout notes", updatedAt: 3 },
+    });
+    row.goal.status = "active";
+    host.chatRunId = "original-turn";
+    host.chatSending = true;
+    host.chatMessage =
+      action === "structured"
+        ? "Write rollout notes"
+        : "/goal " + (action ? action + " " : "") + "Write rollout notes";
+    const pending = dialogs.track(
+      handleSendChat(
+        host,
+        undefined,
+        action === "structured"
+          ? { intent: { kind: "session-goal-start", version: 1, issuedAtMs: Date.now() } }
+          : undefined,
+      ),
+    );
+    await answer("Replace objective");
+    expect(await pending).toBe(true);
+    expect(requestCalls(host.request, "sessions.goal.update")[0]?.[1]).toMatchObject({
+      action: "replace",
+      goalId: goal.id,
+      sessionId: "session-a",
+      expectedRunId: "original-turn",
+      expectedGoalUpdatedAt: goal.updatedAt,
+      objective: "Write rollout notes",
+    });
+    expect(requestCalls(host.request, "chat.send")).toHaveLength(0);
+    expect(host.chatRunId).toBe("resumed-turn");
+  },
+);
+it.each(["finished", "new turn"])(
+  "does not replace after the confirmed turn %s",
+  async (transition) => {
+    const { host, row } = fixture();
+    row.goal.status = "active";
+    host.chatRunId = "original-turn";
+    host.chatSending = true;
+    const pending = dialogs.track(handleSendChat(host));
+    await waitForConfirmDialogActions();
+    host.chatRunId = transition === "finished" ? null : "newer-turn";
+    host.chatSending = transition !== "finished";
+    await answer("Replace objective");
+    expect(await pending).toBe(false);
+    expect(requestCalls(host.request, "sessions.goal.update")).toHaveLength(0);
+  },
+);
 it("retains the proposal on cancel and a failed edit, with the existing recovery receipt", async () => {
   const failed = createDeferred<never>();
   const { host } = fixture(() => failed.promise);

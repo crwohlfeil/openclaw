@@ -146,4 +146,157 @@ suite.define(() => {
       },
     );
   });
+  it("confirms a running goal without stopping on Cancel and adopts its resumed turn", async () => {
+    const artifacts = captureProof
+      ? createControlUiE2eArtifactDir("goal-replace-running")
+      : undefined;
+    if (artifacts) {
+      console.log("Running goal screenshots:", artifacts);
+    }
+    await suite.withPage(
+      { viewport: { width: 1440, height: 900 }, colorScheme: "light" },
+      async ({ page }) => {
+        const now = Date.now();
+        const sessionKey = "agent:main:main";
+        const goal = {
+          schemaVersion: 1,
+          id: "deployment-goal",
+          objective: "Verify the deployment checklist",
+          status: "active",
+          createdAt: now - 60_000,
+          updatedAt: now,
+          tokenStart: 100,
+          tokensUsed: 12_400,
+          tokenBudget: 50_000,
+          continuationTurns: 3,
+        };
+        const row = createControlUiSessionRow(sessionKey, "Deployment checklist", now, {
+          sessionId: "deployment-session",
+          goal,
+          hasActiveRun: true,
+          activeRunIds: ["deployment-turn"],
+          status: "running",
+        });
+        const method = "sessions.goal.update";
+        const gateway = await installMockGateway(page, {
+          sessionKey,
+          sessions: [row],
+          sessionInfo: row,
+          heldMethods: [method],
+          inFlightRun: {
+            runId: "deployment-turn",
+            text: "I am checking the rollout checklist and verifying each deployment step.",
+          },
+        });
+        await page.goto(suite.server.baseUrl + "chat/main");
+        const card = page.locator(".agent-chat__goal");
+        const input = page.locator(".agent-chat__composer-combobox textarea");
+        await exactButton(page, "Stop generating").waitFor();
+        const proposal = "Verify the deployment and write the rollout notes";
+        await input.fill("/goal " + proposal);
+        await exactButton(page, "Replace objective").waitFor();
+        if (artifacts) {
+          await captureFrame(artifacts, "running-before.png", page.locator("body"), [card, input]);
+        }
+        await exactButton(page, "Replace objective").click();
+        const dialog = page.getByRole("dialog", { name: "Replace goal objective?" });
+        await dialog.waitFor();
+        expect(await dialog.textContent()).toContain("interrupts and settles");
+        if (artifacts) {
+          await captureFrame(artifacts, "running-confirmation.png", page.locator("body"), [
+            dialog,
+            card,
+            input,
+          ]);
+        }
+        await exactButton(dialog, "Cancel").click();
+        expect(await input.inputValue()).toBe("/goal " + proposal);
+        expect(await gateway.getRequests(method)).toHaveLength(0);
+        expect(await gateway.getRequests("chat.abort")).toHaveLength(0);
+        if (artifacts) {
+          await captureFrame(artifacts, "running-cancelled.png", page.locator("body"), [
+            card,
+            input,
+          ]);
+        }
+        // The ordinary picker must remain usable while the same turn is executing.
+        await input.fill("/goal");
+        await input.press("Enter");
+        await page.locator(".agent-chat__goal-mode").waitFor();
+        await input.fill(proposal);
+        await exactButton(page, "Replace objective").click();
+        await dialog.waitFor();
+        await page.keyboard.press("Escape");
+        await dialog.waitFor({ state: "hidden" });
+        expect(await input.inputValue()).toBe(proposal);
+        expect(await gateway.getRequests(method)).toHaveLength(0);
+        expect(await gateway.getRequests("chat.abort")).toHaveLength(0);
+        await exactButton(page, "Replace objective").click();
+        await dialog.waitFor();
+        await exactButton(dialog, "Replace objective").click();
+        const request = await gateway.waitForRequest(method);
+        expect(request.params).toMatchObject({
+          action: "replace",
+          sessionId: "deployment-session",
+          goalId: goal.id,
+          objective: proposal,
+          expectedRunId: "deployment-turn",
+          expectedGoalUpdatedAt: now,
+        });
+        const committed = { ...goal, objective: proposal, updatedAt: now + 1 };
+        await gateway.setSessionsListResponse({
+          sessions: [{ ...row, goal: committed, activeRunIds: ["resumed-deployment-turn"] }],
+        });
+        await gateway.resolveDeferred(method, {
+          action: "replace",
+          operationId: (request.params as { operationId: string }).operationId,
+          status: "started",
+          sessionId: row.sessionId,
+          goalId: goal.id,
+          goal: committed,
+          runId: "resumed-deployment-turn",
+        });
+        await expect.poll(() => input.inputValue()).toBe("");
+        await expect
+          .poll(() => card.locator(".agent-chat__goal-objective").textContent())
+          .toBe(proposal);
+        await gateway.emitGatewayEvent("agent", {
+          runId: "resumed-deployment-turn",
+          sessionKey,
+          seq: 1,
+          stream: "lifecycle",
+          ts: Date.now(),
+          data: { phase: "start", startedAt: Date.now() },
+        });
+        await gateway.emitGatewayEvent("chat", {
+          runId: "resumed-deployment-turn",
+          sessionKey,
+          seq: 2,
+          state: "delta",
+          deltaText: "I have resumed with the updated objective and am drafting the rollout notes.",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "I have resumed with the updated objective and am drafting the rollout notes.",
+              },
+            ],
+          },
+        });
+        await page
+          .getByRole("paragraph")
+          .filter({
+            hasText: "I have resumed with the updated objective and am drafting the rollout notes.",
+          })
+          .waitFor();
+        await card.getByText("Pursuing goal", { exact: true }).waitFor();
+        await exactButton(page, "Stop generating").waitFor();
+        expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+        if (artifacts) {
+          await captureFrame(artifacts, "running-after.png", page.locator("body"), [card, input]);
+        }
+      },
+    );
+  });
 });

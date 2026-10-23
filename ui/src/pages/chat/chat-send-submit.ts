@@ -172,10 +172,6 @@ export async function handleSendChat(
       setChatError(host, t("chat.goals.offline"));
       return undefined;
     }
-    if (isChatBusy(host) || hasDirectSessionRun(host)) {
-      setChatError(host, t("chat.goals.busy"));
-      return undefined;
-    }
     if (attachmentsToSend.some((attachment) => attachment.browserAnnotation)) {
       setChatError(host, t("chat.goals.annotationUnsupported"));
       return undefined;

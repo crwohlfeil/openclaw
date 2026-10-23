@@ -15,7 +15,11 @@ import type { SessionGoal } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
 import { registerChatGoalsEnglish } from "../../i18n/locales/en-chat-goals.ts";
 import { registerChatSessionEnglish } from "../../i18n/locales/en-chat-session.ts";
-import type { ChatGoalAction, ChatGoalDraft, ChatGoalRecovery } from "../../lib/chat/chat-types.ts";
+import type {
+  ChatGoalDraft,
+  ChatGoalMutationAction,
+  ChatGoalRecovery,
+} from "../../lib/chat/chat-types.ts";
 import {
   goalOperationExpired,
   goalOperationScopePrefix,
@@ -253,7 +257,7 @@ export function chatGoalRecovery(host: ChatHost): ChatGoalRecovery | undefined {
           : "clear"
         : undefined,
       retired: operation.retired,
-      onCheck: () => runGoalOperation(host, undefined, operation),
+      onCheck: () => mutateChatGoal(host, undefined, operation),
     };
   } catch {
     return undefined;
@@ -285,7 +289,7 @@ export async function replaceExistingChatGoal(
   host: ChatHost,
   objective: string,
 ): Promise<boolean | undefined> {
-  const currentGoal = () =>
+  const currentRow = () =>
     host.sessionsResult?.sessions.find(
       (row) =>
         row.sessionId === host.currentSessionId &&
@@ -294,7 +298,8 @@ export async function replaceExistingChatGoal(
           row.key,
           row.agentId ?? host.sessionsResultAgentId ?? undefined,
         ),
-    )?.goal;
+    );
+  const currentGoal = () => currentRow()?.goal;
   const goal = currentGoal();
   if (!goal) {
     return undefined;
@@ -307,6 +312,8 @@ export async function replaceExistingChatGoal(
     connectionIsCurrent() &&
     host.currentSessionId === sessionId &&
     visibleSessionMatches(host, sessionKey, agentId);
+  const runId = () => host.chatRunId ?? currentRow()?.activeRunIds?.[0];
+  const expectedRunId = goal.status === "active" ? runId() : undefined;
   // Capture values, not a renderer-owned row that may be replaced while the modal is open.
   const { id: goalId, objective: previousObjective, status, updatedAt } = goal;
   const unavailable = () => {
@@ -327,7 +334,7 @@ export async function replaceExistingChatGoal(
     if (currentGoal()?.status === "complete") {
       return t("chat.goals.editUnavailable");
     }
-    if (isChatBusy(host) || hasDirectSessionRun(host)) {
+    if ((isChatBusy(host) || hasDirectSessionRun(host)) && !expectedRunId) {
       return t("chat.goals.busy");
     }
     return null;
@@ -343,7 +350,7 @@ export async function replaceExistingChatGoal(
     }
     const confirmed = await showConfirmDialog({
       title: t("chat.goals.replaceTitle"),
-      message: t("chat.goals.replaceMessage"),
+      message: t(expectedRunId ? "chat.goals.replaceRunningMessage" : "chat.goals.replaceMessage"),
       details: objective,
       confirmLabel: t("chat.goals.replace"),
     });
@@ -363,8 +370,15 @@ export async function replaceExistingChatGoal(
     if (error) {
       return rejectGoalOperation(host, error);
     }
-    // Reuse Edit's durable operation and status guards; replacement never clears or resumes.
-    return await mutateChatGoal(host, { action: "edit", goalId, objective });
+    if (runId() !== expectedRunId) {
+      return rejectGoalOperation(host, t("chat.goals.goalChanged"));
+    }
+    return await mutateChatGoal(
+      host,
+      expectedRunId
+        ? { action: "replace", goalId, objective, expectedRunId, expectedGoalUpdatedAt: updatedAt }
+        : { action: "edit", goalId, objective },
+    );
   } catch (error) {
     if (scopeIsCurrent()) {
       setChatError(host, formatUiError(error));
@@ -408,17 +422,7 @@ export async function submitChatGoalDraft(
 
 export async function mutateChatGoal(
   host: ChatHost,
-  action: { goalId: string } & ({ action: ChatGoalAction } | { action: "edit"; objective: string }),
-): Promise<boolean> {
-  return runGoalOperation(host, action);
-}
-
-async function runGoalOperation(
-  host: ChatHost,
-  action?: { goalId: string } & (
-    | { action: ChatGoalAction }
-    | { action: "edit"; objective: string }
-  ),
+  action?: ChatGoalMutationAction,
   expectedOperation?: GoalOperation,
 ): Promise<boolean> {
   const client = host.client;
@@ -559,8 +563,13 @@ async function runGoalOperation(
       !params ||
       params.goalId !== action.goalId ||
       ("action" in params ? params.action : "clear") !== action.action ||
-      (action.action === "edit" &&
-        (!("objective" in params) || params.objective !== action.objective))
+      ((action.action === "edit" || action.action === "replace") &&
+        (!("objective" in params) || params.objective !== action.objective)) ||
+      (action.action === "replace" &&
+        (!("action" in params) ||
+          params.action !== "replace" ||
+          params.expectedRunId !== action.expectedRunId ||
+          params.expectedGoalUpdatedAt !== action.expectedGoalUpdatedAt))
     ) {
       return rejectGoalOperation(host, t("chat.goals.outcomeUnknown"));
     }
@@ -585,9 +594,18 @@ async function runGoalOperation(
       params:
         action.action === "clear"
           ? identity
-          : action.action === "edit"
-            ? { ...identity, action: "edit", objective: action.objective }
-            : { ...identity, action: action.action },
+          : action.action === "replace"
+            ? {
+                ...identity,
+                sessionId,
+                action: "replace",
+                objective: action.objective,
+                expectedRunId: action.expectedRunId,
+                expectedGoalUpdatedAt: action.expectedGoalUpdatedAt,
+              }
+            : action.action === "edit"
+              ? { ...identity, action: "edit", objective: action.objective }
+              : { ...identity, action: action.action },
       pending: false,
     };
     const validate =

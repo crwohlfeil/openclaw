@@ -33,6 +33,8 @@ const enChatGoals = {
       replaceTitle: "Replace goal objective?",
       replaceMessage:
         "Replace the current objective with the one below? Status, token budget, usage, and elapsed time stay unchanged. This does not resume the goal.",
+      replaceRunningMessage:
+        "Replace the current objective with the one below? Confirming interrupts and settles the current turn, pauses and updates this goal, then resumes it. Its identity, usage history, and token budget are retained. Cancel leaves the running turn untouched.",
       replace: "Replace objective",
       goalChanged:
         "The goal changed while confirmation was open. Review it and try again. Your draft is unchanged.",

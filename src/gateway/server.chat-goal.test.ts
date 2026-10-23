@@ -44,6 +44,7 @@ import type {
 } from "./server-methods/types.js";
 import { pendingChatSendDedupeKey } from "./server-shared.js";
 import { registerGoalAutomaticContinuationCases } from "./server.chat-goal-continuation.test-support.js";
+import { registerGoalReplacementCases } from "./server.chat-goal-replacement.test-support.js";
 import { registerWorkerGoalChatCases } from "./server.chat-goal-workers.test-support.js";
 import {
   createGoalChatStartRequest,
@@ -310,6 +311,7 @@ function holdGoalReceipt() {
 
 describe("Goal chat admission and continuation", () => {
   registerGoalAutomaticContinuationCases(scope, runEmbeddedAgent, rpc, goalStart, userMessages);
+  registerGoalReplacementCases(scope, runEmbeddedAgent, rpc, goalStart, () => context);
 
   registerGoalChatRestartSettlementCase({
     scope,
