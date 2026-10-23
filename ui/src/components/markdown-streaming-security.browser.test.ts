@@ -226,8 +226,8 @@ describe("streaming Markdown sanitization at the live DOM boundary", () => {
     for (const schedule of splitSchedules(sample.source)) {
       const key = `security:${sample.name}:${schedule.name}`;
       const container = document.body.appendChild(document.createElement("div"));
-      // Production supplies session-title registration, which also selects the
-      // prepared-tree path. These fixtures have no dynamic session-title labels.
+      // Production supplies session-title registration. These fixtures have no
+      // dynamic session-title labels.
       const reconciler = new MarkdownDomReconciler(container, () => () => {});
       try {
         for (const end of schedule.ends) {
