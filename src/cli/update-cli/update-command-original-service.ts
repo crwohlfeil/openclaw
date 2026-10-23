@@ -317,6 +317,7 @@ export async function observeOriginalManagedServiceRuntime(
       opts: params.opts,
       timeoutMs: params.updateStepTimeoutMs,
       assertCurrent,
+      serviceCommand: original.definition.command,
     });
     assertCurrent();
     if (!original.verified || !original.schemaVersions) {

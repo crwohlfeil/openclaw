@@ -1,5 +1,6 @@
 import { resolveStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveGatewayServiceProbeHosts } from "../../daemon/gateway-service-probe-hosts.js";
 import type { GatewayServiceCommandConfig } from "../../daemon/service-types.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { readPackageVersion } from "../../infra/package-json.js";
@@ -64,6 +65,7 @@ export async function verifyPreviousGatewayForUpdate(params: {
   requirePluginHealth?: boolean;
   expectedVersion?: string;
   gatewayPort?: number;
+  serviceCommand?: GatewayServiceCommandConfig | null;
 }): Promise<boolean> {
   const { config, env } = params;
   const { assertCurrent, proofOptions } = captureUpdateGatewayReadinessOwner(params);
@@ -108,7 +110,12 @@ export async function verifyPreviousGatewayForUpdate(params: {
     progress("setup", lastReason);
     return await deadline.read("previous Gateway verification", async () => {
       const port =
-        params.gatewayPort ?? (await resolveUpdatedGatewayRestartPort({ config, serviceEnv: env }));
+        params.gatewayPort ??
+        (await resolveUpdatedGatewayRestartPort({
+          config,
+          serviceEnv: env,
+          serviceCommand: params.serviceCommand,
+        }));
       const [installedVersion, expectedBuildId] = await Promise.all([
         readPackageVersion(params.root),
         readBuiltGatewayBuildId(params.root),
@@ -117,7 +124,14 @@ export async function verifyPreviousGatewayForUpdate(params: {
         return false;
       }
       const expectedVersion = params.expectedVersion ?? installedVersion;
-      let observedServiceCommand: GatewayServiceCommandConfig | null = null;
+      let observedServiceCommand: GatewayServiceCommandConfig | null =
+        params.serviceCommand ?? null;
+      const probeHosts =
+        params.serviceCommand === undefined
+          ? undefined
+          : await deadline.read("probe-hosts", () =>
+              resolveGatewayServiceProbeHosts({ env, command: params.serviceCommand }),
+            );
       progress("readiness", `checking service and listener identity on port ${port}`);
       const { health, readyz } = await observeUpdateGatewayReadiness({
         serviceEnv: env,
@@ -132,6 +146,7 @@ export async function verifyPreviousGatewayForUpdate(params: {
         signal: deadline.signal,
         requirePluginHealth: params.requirePluginHealth,
         assertCurrent,
+        probeHosts,
         onProgress: progress,
         onServiceCommand: (command) => {
           observedServiceCommand = command;
@@ -233,6 +248,7 @@ export type UpdateGatewayReadinessParams = {
   settle?: { probes: number };
   signal?: AbortSignal;
   assertCurrent?: () => void;
+  probeHosts?: readonly string[];
   recoverHealth?: (
     health: GatewayRestartSnapshot,
     reinspect: () => Promise<GatewayRestartSnapshot>,
@@ -295,6 +311,7 @@ export async function observeUpdateGatewayReadiness(params: UpdateGatewayReadine
     port: params.gatewayPort,
     expectedVersion: params.expectedVersion,
     ...(params.expectedBuildId ? { expectedBuildId: params.expectedBuildId } : {}),
+    probeHosts: params.probeHosts,
     requirePluginHealth: params.requirePluginHealth ?? false,
     env: params.serviceEnv,
     signal: deadline.signal,

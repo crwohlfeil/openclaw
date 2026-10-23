@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { GatewayServiceRuntime } from "../../daemon/service-runtime.js";
+import type { GatewayServiceCommandConfig } from "../../daemon/service-types.js";
 import type { GatewayService } from "../../daemon/service.js";
 import {
   createUpdateRun,
@@ -17,6 +18,7 @@ import { verifyPreviousGatewayForUpdate } from "./update-command-readiness.js";
 
 const native = vi.hoisted(() => ({
   runtime: vi.fn<GatewayService["readRuntime"]>(),
+  serviceCommand: vi.fn<GatewayService["readCommand"]>(),
   command: vi.fn(),
   ownership: vi.fn(),
   reachable: vi.fn(),
@@ -26,7 +28,7 @@ const native = vi.hoisted(() => ({
 vi.mock("../../daemon/service.js", () => ({
   resolveGatewayService: () => ({
     isLoaded: async () => false,
-    readCommand: async () => null,
+    readCommand: native.serviceCommand,
     readRuntime: native.runtime,
   }),
 }));
@@ -90,6 +92,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
   vi.setSystemTime(startedAt);
   native.runtime.mockReset().mockResolvedValue(serviceRuntime);
+  native.serviceCommand.mockReset().mockResolvedValue(null);
   native.reachable.mockReset().mockResolvedValue(unreachable);
   native.http.mockReset().mockResolvedValue({ healthz: 200, readyz: 200 });
   native.command.mockReset().mockImplementation(async (argv: string[]) => {
@@ -164,6 +167,27 @@ async function awaitProbe<T>(entered: Promise<T>, verification: Promise<boolean>
 }
 
 describe("managed Windows update after the startup canary", () => {
+  it("reuses captured service command evidence without inspecting the service again", async () => {
+    const f = fixture();
+    const serviceCommand: GatewayServiceCommandConfig = {
+      programArguments: ["C:\\node.exe", "C:\\openclaw\\dist\\index.js", "gateway", "run"],
+    };
+    native.reachable.mockResolvedValueOnce({
+      ...unreachable,
+      reachable: true,
+      gatewayVersion: "2026.9.5",
+      gatewayBootId: "previous-gateway-boot",
+      probeError: undefined,
+    });
+
+    await verifyPreviousGatewayForUpdate({ ...f.params, serviceCommand });
+
+    expect(native.serviceCommand).not.toHaveBeenCalled();
+    expect(native.ownership).toHaveBeenCalledWith(
+      expect.objectContaining({ command: serviceCommand }),
+    );
+  });
+
   it.each([false, true])(
     "records the active readiness budget and refreshes its wait reason (json=%s)",
     async (json) => {
