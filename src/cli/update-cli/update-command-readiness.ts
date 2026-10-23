@@ -1,5 +1,6 @@
 import { resolveStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { GatewayServiceCommandConfig } from "../../daemon/service-types.js";
 import { resolveGatewayService } from "../../daemon/service.js";
 import { readPackageVersion } from "../../infra/package-json.js";
 import { STARTUP_MIGRATION_LEASE_TTL_MS } from "../../infra/startup-migration-checkpoint.js";
@@ -116,6 +117,7 @@ export async function verifyPreviousGatewayForUpdate(params: {
         return false;
       }
       const expectedVersion = params.expectedVersion ?? installedVersion;
+      let observedServiceCommand: GatewayServiceCommandConfig | null = null;
       progress("readiness", `checking service and listener identity on port ${port}`);
       const { health, readyz } = await observeUpdateGatewayReadiness({
         serviceEnv: env,
@@ -131,6 +133,9 @@ export async function verifyPreviousGatewayForUpdate(params: {
         requirePluginHealth: params.requirePluginHealth,
         assertCurrent,
         onProgress: progress,
+        onServiceCommand: (command) => {
+          observedServiceCommand = command;
+        },
       });
       if (health.waitOutcome === "timeout" || health.waitOutcome === "still-starting") {
         progress(health.waitOutcome, lastReason, true);
@@ -144,6 +149,7 @@ export async function verifyPreviousGatewayForUpdate(params: {
         gatewayServiceCommandUsesRoot({
           root: params.root,
           env,
+          command: observedServiceCommand,
           timeoutMs: Math.max(
             1,
             Math.min(deadline.remainingMs(), GATEWAY_RESTART_PROBE_TIMEOUT_MS),
@@ -213,6 +219,7 @@ export type UpdateGatewayReadinessParams = {
   probeTimeoutMs?: number;
   deadlineMs?: number;
   onProgress?: (stage: string, reason: string) => void;
+  onServiceCommand?: (command: GatewayServiceCommandConfig | null) => void;
   observedStartupMs?: number;
   expectedVersion?: string;
   expectedBuildId?: string;
@@ -325,6 +332,7 @@ export async function observeUpdateGatewayReadiness(params: UpdateGatewayReadine
       // The restart owner adds settling itself; reserve it once in the shared deadline.
       timeoutMs: Math.max(1, remainingMs() - settleDurationMs),
       probeTimeoutMs: params.probeTimeoutMs,
+      onServiceCommand: params.onServiceCommand,
       onObservation: (snapshot) => {
         health = snapshot;
         params.onProgress?.(

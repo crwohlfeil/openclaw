@@ -345,6 +345,7 @@ describe("managed Windows update after the startup canary", () => {
     expect(native.ownership).toHaveBeenCalledTimes(1);
     expect(native.ownership).toHaveBeenCalledWith(
       expect.objectContaining({
+        command: null,
         timeoutMs: 1_000,
         signal: expect.any(AbortSignal),
       }),
