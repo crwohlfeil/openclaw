@@ -75,6 +75,20 @@ function writeFileSudoIfNeeded(filePath: string, content: string): void {
   assertSpawnSucceeded(`sudo tee ${filePath}`, res);
 }
 
+function mkdirSudoIfNeeded(dirPath: string): void {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    return;
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code !== "EACCES" && code !== "EPERM") {
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  run("sudo", ["mkdir", "-p", dirPath], { inherit: true });
+}
+
 function zoneFileNeedsBootstrap(zonePath: string): boolean {
   if (!fs.existsSync(zonePath)) {
     return true;
@@ -191,15 +205,7 @@ export function registerDnsCli(program: Command) {
         allowFailure: true,
       });
 
-      try {
-        fs.mkdirSync(confDir, { recursive: true });
-      } catch (err) {
-        const code = (err as { code?: string }).code;
-        if (code !== "EACCES" && code !== "EPERM") {
-          throw err instanceof Error ? err : new Error(String(err));
-        }
-        run("sudo", ["mkdir", "-p", confDir], { inherit: true });
-      }
+      mkdirSudoIfNeeded(confDir);
 
       if (!fs.existsSync(corefilePath)) {
         writeFileSudoIfNeeded(corefilePath, `import ${importGlob}\n`);

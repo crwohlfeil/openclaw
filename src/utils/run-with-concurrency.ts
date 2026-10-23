@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import pMap from "p-map";
 
+/** Controls whether the worker pool keeps scheduling after a task failure. */
+type ConcurrencyErrorMode = "continue" | "stop";
+
 /** Options for running a fixed list of promise factories through a bounded worker pool. */
 export type RunTasksWithConcurrencyOptions<T> = {
   /** Task factories are started lazily so the helper can enforce `limit`. */
@@ -8,7 +11,7 @@ export type RunTasksWithConcurrencyOptions<T> = {
   /** Maximum number of tasks allowed to run at the same time; clamped to at least one. */
   limit: number;
   /** `stop` prevents new work after the first failure; in-flight workers still settle. */
-  errorMode?: "continue" | "stop";
+  errorMode?: ConcurrencyErrorMode;
   /** Reject immediately on a task failure instead of returning aggregate error state. */
   throwOnError?: boolean;
   /** Called once per failed task with the original task index. */
