@@ -399,7 +399,16 @@ function selectControlledSubagentRunFacts(
   cfg?: OpenClawConfig,
   selectedRunId?: string,
 ): SubagentRunReadRecord[] {
-  const children = Map.groupBy(snapshot.values(), (entry) => entry.childSessionKey.trim());
+  const children = new Map<string, SubagentRunReadRecord[]>();
+  for (const entry of snapshot.values()) {
+    const key = entry.childSessionKey.trim();
+    const runs = children.get(key);
+    if (runs) {
+      runs.push(entry);
+    } else {
+      children.set(key, [entry]);
+    }
+  }
   children.delete("");
   return [...children.values()].flatMap((runs) =>
     runs.filter(
