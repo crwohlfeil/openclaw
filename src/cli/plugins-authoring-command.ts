@@ -3,7 +3,7 @@ import path from "node:path";
 import { replaceFileAtomic } from "@openclaw/fs-safe/atomic";
 import { jsonSchemaValuesEqual } from "@openclaw/normalization-core/json-schema";
 import { root } from "../infra/fs-safe.js";
-import { formatCwdRelativePathOrAbsolute as formatOutputPath } from "../infra/safe-cwd.js";
+import { tryProcessCwd } from "../infra/safe-cwd.js";
 import { getToolPluginMetadata } from "../plugin-sdk/tool-plugin.js";
 import { loadPluginControlUiDeclaration } from "../plugins/control-ui-build-manifest.js";
 import {
@@ -59,6 +59,11 @@ type PluginsInitOptions = {
 const SUPPORTED_PLUGIN_SCAFFOLD_TYPES = ["tool", "provider", "feature"] as const;
 const CLAWHUB_PACKAGE_PUBLISH_WORKFLOW_REF = "9d49df109d4ad3dc8a6ecf05d26b39f46d294721";
 const TOOL_PLUGIN_API_RANGE = ">=2026.5.17";
+
+function formatOutputPath(targetPath: string, samePathFallback: string): string {
+  const cwd = tryProcessCwd();
+  return cwd ? path.relative(cwd, targetPath) || samePathFallback : targetPath;
+}
 
 function writeJsonFile(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);

@@ -15,7 +15,6 @@ import {
 } from "./scorecard-taxonomy.js";
 
 type Qualification = "qualified" | "gap" | "unknown";
-type DeclarationStatus = "current" | "stale" | "unknown";
 
 function assertionDeclarations(assertions: NonNullable<QaEvidenceOccurrence["assertions"]>) {
   return assertions
@@ -71,7 +70,7 @@ export function buildQaScorecardGapReport(params: {
     const scenario = scenarios.find((item) => item.id === occurrence.parentCell?.scenarioId);
     // Captured IDs alone do not establish that today's declaration means the
     // same thing. Keep this comparison local to reporting, not proof enforcement.
-    const declarationStatus: DeclarationStatus =
+    const declarationStatus: "current" | "stale" | "unknown" =
       !scenario?.assertions?.length || !occurrence.assertions?.length
         ? "unknown"
         : scenario.execution.kind !== occurrence.parentCell?.executionKind ||

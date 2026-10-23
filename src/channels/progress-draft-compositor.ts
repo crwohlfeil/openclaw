@@ -13,10 +13,6 @@ import {
 } from "./progress-draft-events.js";
 import { removeChannelProgressDraftLine } from "./progress-draft-lines.js";
 import {
-  createProgressDraftSnapshotState,
-  snapshotProgressDraftState,
-} from "./progress-draft-snapshot.js";
-import {
   formatReasoningProgressDisplayLine,
   createReasoningProgressAccumulator,
   normalizeCommentaryProgressText,
@@ -35,6 +31,8 @@ import {
   isChannelProgressDraftWorkToolName,
   mergeChannelProgressDraftLineForStreaming,
   normalizeChannelProgressDraftLineIdentity,
+  resolveChannelProgressDraftConfig,
+  resolveChannelProgressDraftLabel,
   resolveChannelProgressDraftMaxLineChars,
   resolveChannelProgressDraftMaxLines,
   resolveChannelStreamingProgressCommentary,
@@ -85,15 +83,26 @@ export function createChannelProgressDraftCompositor(params: ChannelProgressDraf
       mode: params.mode,
       previewToolProgressEnabled,
     });
-  let {
-    displayEntry,
-    transferredStatus,
-    transferredDiffStat,
-    lines,
-    planSteps,
-    planExplanation,
-    planExplanationFormat,
-  } = createProgressDraftSnapshotState(params);
+  const snapshot = params.initialSnapshot;
+  let displayEntry = snapshot
+    ? {
+        streaming: {
+          progress: {
+            ...resolveChannelProgressDraftConfig(params.entry),
+            label: snapshot.label === undefined ? false : snapshot.label,
+          },
+        },
+      }
+    : params.entry;
+  let transferredStatus = snapshot?.statusHeadline
+    ? { text: snapshot.statusHeadline, format: snapshot.statusHeadlineFormat }
+    : undefined;
+  // Without file identities a transferred total cannot deduplicate later mutations.
+  let transferredDiffStat = snapshot?.diffStat;
+  let lines = snapshot ? [...snapshot.lines] : [];
+  let planSteps = snapshot?.plan;
+  let planExplanation = snapshot?.planExplanation ?? "";
+  let planExplanationFormat = snapshot?.planExplanationFormat;
   let progressSuppressed = false;
   let lastRenderedText = "";
   let lastRenderedStatusFormat: "plain" | undefined;
@@ -177,17 +186,26 @@ export function createChannelProgressDraftCompositor(params: ChannelProgressDraf
 
   const resolveDiffStat = () => transferredDiffStat ?? diffStatTracker.resolve();
 
-  const getSnapshot = (): ChannelProgressDraftCompositorSnapshot =>
-    snapshotProgressDraftState({
+  const getSnapshot = (): ChannelProgressDraftCompositorSnapshot => {
+    const status = resolveStatusText();
+    const diffStat = resolveDiffStat();
+    const statusHeadline = status.text;
+    const label = resolveChannelProgressDraftLabel({
       entry: displayEntry,
       seed: params.seed,
-      status: resolveStatusText(),
-      lines,
-      plan: planSteps,
-      planExplanation,
-      planExplanationFormat,
-      diffStat: resolveDiffStat(),
+      narration: statusHeadline,
     });
+    return {
+      lines,
+      ...(label ? { label } : {}),
+      ...(statusHeadline ? { statusHeadline } : {}),
+      ...(statusHeadline && status.format ? { statusHeadlineFormat: status.format } : {}),
+      ...(planSteps ? { plan: planSteps } : {}),
+      ...(planExplanation ? { planExplanation } : {}),
+      ...(planExplanation && planExplanationFormat ? { planExplanationFormat } : {}),
+      ...(diffStat ? { diffStat } : {}),
+    };
+  };
 
   const clearActivityState = (suppressed: boolean) => {
     clearPreambleExpiryTimer();

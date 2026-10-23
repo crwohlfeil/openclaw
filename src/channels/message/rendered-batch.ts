@@ -1,7 +1,6 @@
 import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import type {
-  RenderedMessageBatch,
   RenderedMessageBatchPlan,
   RenderedMessageBatchPlanItem,
   RenderedMessageBatchPlanKind,
@@ -72,13 +71,4 @@ export function createRenderedMessageBatchPlan(
       items,
     },
   );
-}
-
-export function createRenderedMessageBatch(
-  payloads: ReplyPayload[],
-): RenderedMessageBatch<ReplyPayload> {
-  return {
-    payloads,
-    plan: createRenderedMessageBatchPlan(payloads),
-  };
 }

@@ -25,7 +25,7 @@ import { normalizeOutboundReplyFacts } from "../../infra/outbound/reply-policy.j
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { createLiveMessageState, markLiveMessagePreviewUpdated } from "./live.js";
 import { createMessageReceiptFromOutboundResults } from "./receipt.js";
-import { createRenderedMessageBatch } from "./rendered-batch.js";
+import { createRenderedMessageBatchPlan } from "./rendered-batch.js";
 import type {
   DurableMessageSendIntent,
   LiveMessageState,
@@ -233,8 +233,10 @@ async function withMessageSendContext<T>(
     signal: effectiveSignal ?? neverAbortedSignal,
     ...(previousReceipt ? { previousReceipt } : {}),
     preview: liveState,
-    render: async (): Promise<RenderedMessageBatch<ReplyPayload>> =>
-      createRenderedMessageBatch(payloads),
+    render: async (): Promise<RenderedMessageBatch<ReplyPayload>> => ({
+      payloads,
+      plan: createRenderedMessageBatchPlan(payloads),
+    }),
     previewUpdate: async (rendered): Promise<LiveMessageState<ReplyPayload>> => {
       liveState = onPreviewUpdate
         ? await onPreviewUpdate(rendered, liveState)

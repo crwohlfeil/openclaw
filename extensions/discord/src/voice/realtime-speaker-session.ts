@@ -20,7 +20,6 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { formatErrorMessage } from "openclaw/plugin-sdk/ssrf-runtime";
 import { sliceUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import type { DiscordVoiceIngressContext } from "./ingress.js";
-import { formatRealtimeInfoLog } from "./log-preview.js";
 import { DiscordRealtimeConsults, type AgentProxyConsultState } from "./realtime-consults.js";
 import { DiscordRealtimePlayback } from "./realtime-playback.js";
 import type { DiscordRealtimePlayer } from "./realtime-player.js";
@@ -39,6 +38,12 @@ import type {
 } from "./session.js";
 
 const logger = createSubsystemLogger("discord/voice");
+const DISCORD_REALTIME_INTERRUPTION_MESSAGES = new Map([
+  ["client:response.cancel", "interrupt requested"],
+  ["client:conversation.item.truncate.skipped", "interrupt ignored"],
+  ["client:conversation.item.truncate", "audio truncated"],
+  ["server:response.cancelled", "interrupt confirmed"],
+]);
 const DISCORD_REALTIME_DUPLICATE_ERROR_SUPPRESS_MS = 60_000;
 const discordRealtimeTalkPayload = () => ({});
 
@@ -627,10 +632,28 @@ export class DiscordRealtimeSpeakerSession {
     if (event.direction === "server" && event.type === "input_audio_buffer.speech_started") {
       this.turns.resetPartialWakeNameTracking();
     }
-    const info = formatRealtimeInfoLog(event);
-    if (info) {
-      logger.info(info);
+    const eventKey = `${event.direction}:${event.type}`;
+    const message =
+      eventKey === "server:error" &&
+      event.detail === "Cancellation failed: no active response found"
+        ? "interrupt raced"
+        : DISCORD_REALTIME_INTERRUPTION_MESSAGES.get(eventKey);
+    if (message) {
+      logger.info(
+        `discord voice: realtime model ${message} ${eventKey}${event.detail ? ` ${event.detail}` : ""}`,
+      );
+      return;
     }
+    if (
+      !event.type.startsWith("session.") ||
+      event.type.startsWith("session.output_audio") ||
+      event.type.endsWith(".delta") ||
+      event.type.endsWith(".append")
+    ) {
+      return;
+    }
+    const detail = event.detail ? ` ${event.detail}` : "";
+    logger.info(`discord voice: realtime lifecycle ${event.direction}:${event.type}${detail}`);
   }
 
   private markProviderGenerationObserved(): void {
