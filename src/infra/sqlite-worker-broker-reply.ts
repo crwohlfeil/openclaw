@@ -180,13 +180,7 @@ export async function dispatchSqliteWorkerJob(
               const lease = job.maintenanceScope ? job.maintenanceScope.run(acquire) : acquire();
               schemaLease = lease;
               job.maintenanceScope?.own(lease, "shared-resources", () => lease.release());
-              return {
-                assertCurrent() {
-                  assertAccess();
-                  lease.assertCurrent();
-                },
-                release: () => lease.release(),
-              };
+              return lease;
             },
           });
         }
