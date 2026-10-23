@@ -14,7 +14,7 @@ export class AsyncContext<T> {
   constructor(private readonly key: symbol) {}
 
   getStore(): T | undefined {
-    // The key belongs to this typed owner; the shared carrier never interprets values.
+    // SAFETY: The key belongs to this typed owner; the carrier never interprets values.
     return context.getStore()?.[this.key] as T | undefined;
   }
 

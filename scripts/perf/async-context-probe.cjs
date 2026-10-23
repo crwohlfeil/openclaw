@@ -18,7 +18,7 @@ function positiveInteger(name, fallback) {
 const sampleEvery = positiveInteger("OPENCLAW_ASYNC_CONTEXT_PROBE_SAMPLE_EVERY", 8);
 const intervalMs = positiveInteger("OPENCLAW_ASYNC_CONTEXT_PROBE_INTERVAL_MS", 30_000);
 const NativeStorage = asyncHooks.AsyncLocalStorage;
-const nativeEnterWith = NativeStorage.prototype.enterWith;
+const nativeEnterWith = Function.prototype.call.bind(NativeStorage.prototype.enterWith);
 const root = new asyncHooks.AsyncResource("OpenClawAsyncContextProbeValidation");
 const frameSymbol = Object.getOwnPropertySymbols(root).find((key) =>
   String(key).includes("context_frame"),
@@ -41,9 +41,9 @@ if (!frameSymbol || typeof nativeEnterWith !== "function") {
 root.runInAsyncScope(() => {
   const storage = new NativeStorage();
   const marker = {};
-  nativeEnterWith.call(storage, marker);
+  nativeEnterWith(storage, marker);
   const first = currentFrame();
-  nativeEnterWith.call(storage, marker);
+  nativeEnterWith(storage, marker);
   const second = currentFrame();
   if (
     first === second ||
@@ -138,7 +138,7 @@ NativeStorage.prototype.enterWith = function (value) {
       }
     }
   }
-  return nativeEnterWith.call(this, value);
+  return nativeEnterWith(this, value);
 };
 
 function flush() {
@@ -157,9 +157,9 @@ function flush() {
     undefinedEntries: entries - activeEntries,
     meanFrameEntries: mean(entries, samples),
     meanActiveEntries: mean(activeEntries, samples),
-    frameSizeHistogram: [...histogram].sort((a, b) => a[0] - b[0]),
+    frameSizeHistogram: [...histogram].toSorted((a, b) => a[0] - b[0]),
     owners: [...owners.values()]
-      .sort((a, b) => b.entries - a.entries)
+      .toSorted((a, b) => b.entries - a.entries)
       .map(({ owner, entries: present, active, undefined: absent }) => ({
         owner,
         present,
@@ -168,8 +168,16 @@ function flush() {
         entriesPerSample: mean(present, samples),
       })),
     enteringOwners: [...entering.values()]
-      .sort((a, b) => b.entries - a.entries)
-      .map((row) => ({ ...row, meanFrameEntries: mean(row.entries, row.samples) })),
+      .toSorted((a, b) => b.entries - a.entries)
+      .map((row) => ({
+        owner: row.owner,
+        copies: row.copies,
+        samples: row.samples,
+        entries: row.entries,
+        active: row.active,
+        undefined: row.undefined,
+        meanFrameEntries: mean(row.entries, row.samples),
+      })),
   };
   const temporary = `${output}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(report, null, 2)}\n`);
