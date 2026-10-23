@@ -141,7 +141,15 @@ export async function verifyPreviousGatewayForUpdate(params: {
       // its cleanup to the same absolute readiness deadline so a wedged manager cannot
       // keep the updater alive after the verification budget expires.
       const servesPreviousPackage = await deadline.run(() =>
-        gatewayServiceCommandUsesRoot({ root: params.root, env }),
+        gatewayServiceCommandUsesRoot({
+          root: params.root,
+          env,
+          timeoutMs: Math.max(
+            1,
+            Math.min(deadline.remainingMs(), GATEWAY_RESTART_PROBE_TIMEOUT_MS),
+          ),
+          signal: deadline.signal,
+        }),
       );
       assertCurrent();
       return Boolean(

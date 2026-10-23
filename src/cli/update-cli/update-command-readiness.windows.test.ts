@@ -343,6 +343,12 @@ describe("managed Windows update after the startup canary", () => {
 
     expect(observedSignal?.aborted).toBe(true);
     expect(native.ownership).toHaveBeenCalledTimes(1);
+    expect(native.ownership).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 1_000,
+        signal: expect.any(AbortSignal),
+      }),
+    );
     expect(f.read().steps).toContainEqual(
       expect.objectContaining({
         step: "warning:previous gateway verification",
