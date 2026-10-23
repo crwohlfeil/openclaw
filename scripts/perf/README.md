@@ -136,7 +136,7 @@ are context, as are higher tails with at least 20% fewer collections and no rise
 in total GC. Always report both maximum pauses; the candidate maximum still
 gates above `max(50 ms, 2 × baseline maximum)`.
 
-## Subagent maintenance capture
+## Subagent maintenance and scoped reads
 
 `subagent-maintenance-capture-measure.ts` measures the production session
 maintenance preservation owner with 6,000 synthetic retained subagent runs and
@@ -144,6 +144,37 @@ maintenance preservation owner with 6,000 synthetic retained subagent runs and
 directions, a live-only row, and real worker update/deletion publications after
 preservation preparation. The returned protected-key digest must match across
 baseline and candidate. This measures the maintenance owner, not Gateway RPCs.
+`--team-shape` instead generates 5,000 sessions and 6,000 retained runs with zero
+transcript payload, then installs those runs in the registry and holds 60 child
+execution claims. Existing pending deliveries remain protected alongside the
+running children. Fixture preparation supplies the real requester/controller
+store provenance and persists the active replacements before warming reads.
+Fixture generation and these writes are sequential preparation work.
+Add `--mutate-every 10` to commit an active run replacement every ten operations.
+Mutation time and CPU are included in the measured operation.
+
+`--flow maintenance` is the default. With `--team-shape`, `--flow prompt` calls
+`buildActiveSubagentRuntimeContext` and `--flow control` calls
+`buildControlledSubagentRunsReadContext`, rotating across the parents of the 60
+active runs. These two flows compact settled resident rows through the normal
+registry owner, so selected reads include durable payload hydration; active and
+pending-delivery rows retain their normal full shape. The report counts evicted
+resident payloads. Only the selected read and optional committed mutation are timed;
+maintenance checks and output digesting remain outside measurement. Read time is
+fixed to the fixture's timestamp so recent-history classification and digests
+match across processes; synchronization and performance clocks remain real.
+The report includes each parent's retained/active/selected context counts,
+output size, and digest. Compare `outputsSha256` as well as protected-key digests
+between baseline and candidate. Prompt output size counts characters; control
+size counts selected runs. Control digests omit only the deliberately mutated
+delivery attempt counter and normalize the fixture-directory prefix.
+
+Add `--concentrated-root` for a separately labeled topology stress case. It
+reparents all retained registry generations to one generated root, preserving
+the 4,000 child sessions and 60 active claims in the default team shape. Ordinary
+distributed runs cover roughly six retained generations per active parent;
+concentrated runs exercise the full 6,000-record scope. This is synthetic
+registry topology stress, not the fixture's original session-parent layout.
 
 ```sh
 node --expose-gc --trace-gc-nvp --import ./scripts/tsx.mjs \
@@ -156,10 +187,17 @@ Run each side in a fresh process and a new state directory. Setup and warmup
 precede `CAPTURE_READY`; use preparation CPUs until that marker, then assign the
 pair's interleaved measurement CPUs before the shared start. Use the campaign's
 exclusive lock and production guard, then swap placements for the second pair.
+Alternatively, `--start-file /path/to/start` waits after preparation until that
+file contains a common future epoch in milliseconds for both sides.
 The default one-millisecond yield between captures permits event-loop sampling;
 it is excluded from per-capture latency but included in elapsed time and CPU.
-Allocation includes collected objects. Registry `Map.set` row writes are counted
-in a separate unprofiled capture. GC reports count, total time, maximum pause,
+Use `--allocations` in a separate paired pass for allocation including collected
+objects; the default pass measures unprofiled CPU, capture latency, and GC.
+For a paced minute use `--team-shape --operations 450 --interval-ms 133`.
+`--per-minute 450` projects per-call allocation and CPU at an explicitly assumed
+capture rate; it is not a measured production call rate. Main-thread and process
+CPU are both recorded. Registry `Map.set` row writes are counted
+in a separate unprofiled selected read. GC reports count, total time, maximum pause,
 and tails with sample counts; promotion excludes setup and profiler-stop GC.
 Apply the campaign's sample-count and paired-delta rules. RSS high water includes
 setup. State and profile files remain in the task-owned directory for inspection
