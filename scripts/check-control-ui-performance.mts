@@ -59,13 +59,15 @@ const controlUiPerformanceBudgets = {
   // Initial shell plus shared route styles and the route's own stylesheet.
   chatBootCssRequests: 3,
   newBootCssRequests: 3,
-  // Isolate sidebar/chat imports: 1,272,578 B Chat / 766,391 B New.
-  // Preserve main's relative headroom against the matched 571040c3 build.
-  chatBootJsGzipBytes: 1_365_101,
-  newBootJsGzipBytes: 802_410,
+  // Defer sidebar Pages/Roster: 1,274,043 B Chat / 771,311 B New.
+  // Preserve main's relative headroom against the matched df3c47e1 libdeflate11 build.
+  chatBootJsGzipBytes: 1_366_403,
+  newBootJsGzipBytes: 807_612,
   startupCssRequests: 1,
   // Solid 2 action/optimistic runtime adoption; offset tracked by HF-STARTUP-BUDGET.
-  startupJsGzipBytes: 325_081,
+  // Jacob Tomlinson approved +50 B for native inline views (#173135, 2026-10-22).
+  // The separate 512 B growth and 64 B build-variance allowances are unchanged.
+  startupJsGzipBytes: 325_131,
   // Keep 45 KiB advisory: tiny integrated changes must not exhaust the budget.
   // The fixed 50 KiB ceiling bounds accumulation of small changes.
   startupCssGzipBytes: 50 * KIB,
