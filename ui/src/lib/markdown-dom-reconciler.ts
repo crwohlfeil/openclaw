@@ -1,10 +1,4 @@
 import { SESSION_TITLE_TARGET_SELECTOR } from "../components/session-progress-hovercard-target.ts";
-import {
-  readMarkdownDomNodes,
-  type MarkdownDomNode,
-  type MarkdownDomTree,
-  type MarkdownHtmlParts,
-} from "./markdown-dom-tree.ts";
 
 /** A renderer supplies only the lifecycle of its retained media island. */
 export type MarkdownMediaRoot = {
@@ -18,6 +12,19 @@ export type MarkdownDomMedia = {
 };
 
 type MarkdownSessionTitleRegistration = (target: HTMLElement, label: HTMLElement) => () => void;
+
+type CanonicalNode = {
+  key: string | number;
+  canonical: string;
+  tag?: string;
+  namespace?: string;
+  attributes?: [string, string][];
+  children: CanonicalNode[];
+  hasMedia: boolean;
+  slot?: number;
+  text?: string;
+  opaque: boolean;
+};
 
 type DomRange = { start: Comment; end: Comment };
 type RenderedNode = DomRange & {
@@ -35,9 +42,8 @@ type Fragment = DomRange & {
   html: string;
   prefix: string;
   parsedHtml?: string;
-  prepared?: MarkdownDomTree;
   incremental: boolean;
-  canonical: MarkdownDomNode[];
+  canonical: CanonicalNode[];
   children: RenderedNode[];
 };
 
@@ -90,7 +96,7 @@ function parseCanonical(
   prefix: string,
   incremental: boolean,
   sessionTitles: boolean,
-): MarkdownDomNode[] {
+): CanonicalNode[] {
   const template = document.createElement("template");
   template.innerHTML = html;
   const slots = new Map<Node, number>();
@@ -143,12 +149,45 @@ function parseCanonical(
     }
   }
 
-  return readMarkdownDomNodes(template.content, {
-    incremental,
-    sessionTitles,
-    slots,
-    mediaAncestors,
-  });
+  const children = (parent: ParentNode): CanonicalNode[] => {
+    const nodes = Array.from(parent.childNodes);
+    const counts = new Map<string, number>();
+    for (const node of nodes) {
+      const key = node instanceof Element ? node.getAttribute("data-markdown-key") : null;
+      if (key) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    return nodes.map((node, index): CanonicalNode => {
+      const key = node instanceof Element ? node.getAttribute("data-markdown-key") : null;
+      const hasMedia = mediaAncestors.has(node) || slots.has(node);
+      const element = node instanceof Element ? node : undefined;
+      const opaque = Boolean(
+        element &&
+        ((!incremental && !hasMedia) ||
+          (sessionTitles && element.matches(SESSION_TITLE_TARGET_SELECTOR)) ||
+          element.classList.contains("markdown-mermaid") ||
+          element.localName.includes("-")),
+      );
+      return {
+        key: key && counts.get(key) === 1 ? key : index,
+        canonical: `${node.nodeType}:${element ? element.outerHTML : node.textContent}`,
+        tag: element?.localName,
+        namespace: element?.namespaceURI ?? undefined,
+        attributes: element
+          ? Array.from(element.attributes, ({ name, value }) => [name, value])
+          : undefined,
+        children: element && !opaque ? children(element) : [],
+        hasMedia,
+        slot: slots.get(node),
+        text: node instanceof Text ? node.data : undefined,
+        opaque,
+      };
+    });
+  };
+  // Only strings and plain descriptors survive parsing. Retained parsed nodes
+  // would keep obsolete trees alive through their parent pointers.
+  return children(template.content);
 }
 
 function releaseSessionTitles(node: {
@@ -172,9 +211,6 @@ function patchAttributes(
   before: [string, string][],
   after: [string, string][],
 ): void {
-  if (before === after) {
-    return;
-  }
   const previous = new Map(before);
   const next = new Map(after);
   for (const name of new Set([...previous.keys(), ...next.keys()])) {
@@ -249,10 +285,9 @@ export class MarkdownDomReconciler {
   update(
     messageKey: string,
     source: string,
-    parts: Readonly<MarkdownHtmlParts>,
+    [stableHtml, tailHtml]: readonly [string, string],
     media?: MarkdownDomMedia,
   ): void {
-    const [stableHtml, tailHtml] = parts;
     if (this.messageKey !== messageKey) {
       this.releaseMedia();
     }
@@ -268,7 +303,6 @@ export class MarkdownDomReconciler {
       if (this.tail) {
         // Promotion retains the same DOM owner and its reader state.
         this.tail.html = completed;
-        this.tail.prepared = undefined;
         this.tail = undefined;
       } else {
         this.fragments.push(this.createFragment(completed, false));
@@ -281,7 +315,6 @@ export class MarkdownDomReconciler {
         this.tail = this.createFragment(tailHtml, true);
         this.fragments.push(this.tail);
       }
-      this.tail.prepared = parts.tail?.html === tailHtml ? parts.tail : undefined;
     } else if (this.tail) {
       releaseSessionTitles(this.tail);
       removeRange(this.tail);
@@ -303,7 +336,6 @@ export class MarkdownDomReconciler {
       this.fragments.push(fragment);
     }
     fragment.html = html;
-    fragment.prepared = undefined;
     this.renderFragments(media);
   }
 
@@ -348,20 +380,12 @@ export class MarkdownDomReconciler {
       // Retain the inputs separately so completed fragments need no combined key.
       // Media policy still refreshes on every update.
       if (fragment.prefix !== prefix || fragment.parsedHtml !== fragment.html) {
-        const prepared = fragment.prepared;
-        // Prepared tails include session-title islands but no media-slot rewriting.
-        fragment.canonical =
-          prepared?.html === fragment.html &&
-          !prefix &&
-          fragment.incremental &&
-          this.registerSessionTitle
-            ? prepared.nodes
-            : parseCanonical(
-                fragment.html,
-                prefix,
-                fragment.incremental,
-                Boolean(this.registerSessionTitle),
-              );
+        fragment.canonical = parseCanonical(
+          fragment.html,
+          prefix,
+          fragment.incremental,
+          Boolean(this.registerSessionTitle),
+        );
         fragment.prefix = prefix;
         fragment.parsedHtml = fragment.html;
       } else if (!media) {
@@ -380,7 +404,7 @@ export class MarkdownDomReconciler {
   private reconcile(
     range: DomRange,
     previous: RenderedNode[],
-    canonical: MarkdownDomNode[],
+    canonical: CanonicalNode[],
     media?: MarkdownDomMedia,
   ): RenderedNode[] {
     const remaining = new Map(previous.map((node) => [node.key, node]));
@@ -409,7 +433,7 @@ export class MarkdownDomReconciler {
     return next;
   }
 
-  private updateNode(node: RenderedNode, source: MarkdownDomNode, media?: MarkdownDomMedia): void {
+  private updateNode(node: RenderedNode, source: CanonicalNode, media?: MarkdownDomMedia): void {
     if (source.slot !== undefined) {
       const index = source.slot;
       let slot = this.mediaSlots.get(index);
