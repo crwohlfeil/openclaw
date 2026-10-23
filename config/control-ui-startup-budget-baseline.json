@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 285523,
-  "reason": "Separate sidebar import leaves with assertion-free Labs membership; matched b19bade1 build measures 285523 B startup within 64 B variance, with unchanged requests and hard cap",
+  "startupJsGzipBytes": 282539,
+  "reason": "Defer 245 optional feature English strings: matched b19bade build 285482 to 282539 B gzip with 7 JS and 1 CSS request.",
   "updatedAt": "2026-10-23"
 }
