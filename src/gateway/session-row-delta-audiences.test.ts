@@ -63,6 +63,23 @@ it("preserves shared ancestor references across staggered roster reads and first
       );
     const frameFor = (peer: (typeof peers)[number]) =>
       JSON.parse(peer.send.mock.lastCall![0]) as EventFrame;
+    const publishAndCountRowEncodings = () => {
+      const stringify = JSON.stringify;
+      let rowEncodings = 0;
+      const encoding = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
+        const value: unknown = args[0];
+        if (isRecord(value) && value.key === child && typeof value.version === "number") {
+          rowEncodings++;
+        }
+        return stringify(...args);
+      });
+      try {
+        publish();
+        return rowEncodings;
+      } finally {
+        encoding.mockRestore();
+      }
+    };
     try {
       publish();
       // The socket admits this row before a roster listener or its first list exists.
@@ -91,22 +108,8 @@ it("preserves shared ancestor references across staggered roster reads and first
           { agentId: "main", limit: 1 },
         );
         expect(result.sessions.map((row) => row.key)).toEqual([child]);
-        const stringify = JSON.stringify;
-        let rowEncodings = 0;
-        const encoding = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
-          const value: unknown = args[0];
-          if (isRecord(value) && value.key === child && typeof value.version === "number") {
-            rowEncodings++;
-          }
-          return stringify(...args);
-        });
-        try {
-          publish();
-        } finally {
-          encoding.mockRestore();
-        }
         // One row comparison and one encoding per wire variant, independent of socket count.
-        expect(rowEncodings).toBeLessThanOrEqual(4);
+        expect(publishAndCountRowEncodings()).toBeLessThanOrEqual(4);
         for (const peer of peers) {
           const frame = frameFor(peer);
           expect(frame.payload).toMatchObject({
@@ -123,6 +126,26 @@ it("preserves shared ancestor references across staggered roster reads and first
           });
           expect(decoded?.payload).not.toHaveProperty("ancestorSessionRefs");
         }
+      }
+      replaceSessionEntrySync(
+        { agentId: "main", sessionKey: parent },
+        { sessionId: parent, label: "Renamed parent", updatedAt: 3, visibility: "shared" },
+      );
+      await projection.ensureMaterialized();
+      publish();
+      for (const peer of peers) {
+        peer.decoder.dispatch(frameFor(peer));
+      }
+      // A shared fact change must not permanently split otherwise equal socket histories.
+      expect(publishAndCountRowEncodings()).toBeLessThanOrEqual(4);
+      for (const peer of peers) {
+        let decoded: EventFrame | undefined;
+        peer.decoder.dispatch(frameFor(peer), (event) => {
+          decoded = event;
+        });
+        expect(decoded?.payload).toMatchObject({
+          ancestorSessions: [{ key: parent, label: "Renamed parent" }],
+        });
       }
     } finally {
       detach();

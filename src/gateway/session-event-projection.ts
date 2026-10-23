@@ -112,7 +112,8 @@ export function prepareSessionEventProjection(
       {
         row: GatewaySessionRow;
         ancestors: ReturnType<typeof prepareSessionAncestor>[] | undefined;
-        hiddenAncestors: string[];
+        hiddenAncestors: Array<{ key: string; histories: Map<object, object> }>;
+        ancestorInvalidations: Map<object, object> | undefined;
         deliveries: [WeakMap<object, PublicationDelivery>, WeakMap<object, PublicationDelivery>];
       }
     >();
@@ -145,11 +146,11 @@ export function prepareSessionEventProjection(
         if (!row) {
           return undefined;
         }
-        const hiddenAncestors: string[] = [];
+        const hiddenAncestors: Array<{ key: string; histories: Map<object, object> }> = [];
         const ancestorRows = ancestors?.every((ancestor) => projection.isCurrent(ancestor))
           ? ancestors.flatMap((ancestor) => {
               if (presentation.sharing.entryFilter?.(ancestor.key, ancestor.entry) === false) {
-                hiddenAncestors.push(ancestor.key);
+                hiddenAncestors.push({ key: ancestor.key, histories: new Map() });
                 return [];
               }
               const presented = presentation.present(ancestor, enrichment);
@@ -160,6 +161,7 @@ export function prepareSessionEventProjection(
           row,
           ancestors: ancestorRows,
           hiddenAncestors,
+          ancestorInvalidations: ancestorRows ? undefined : new Map(),
           deliveries: [new WeakMap(), new WeakMap()],
         };
         audiences.set(audienceKey, audience);
@@ -170,11 +172,11 @@ export function prepareSessionEventProjection(
         GATEWAY_CLIENT_CAPS.SESSION_ROW_DELTAS,
       );
       const references = connection.references(client);
-      for (const key of audience.hiddenAncestors) {
-        references.forget(key);
+      for (const hidden of audience.hiddenAncestors) {
+        references.forget(hidden.key, hidden.histories);
       }
       if (!audience.ancestors) {
-        connection.forgetConnectionAncestors(client);
+        references.clearAncestors(audience.ancestorInvalidations);
       }
       const deliveries = audience.deliveries[rowDeltas ? 1 : 0];
       let delivery = deliveries.get(references.history);

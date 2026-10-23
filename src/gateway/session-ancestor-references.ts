@@ -83,30 +83,45 @@ export class ConnectionSessionRows {
     return this.#history;
   }
 
-  clear(cause: SessionEventRowsResetCause = "close"): void {
+  // One transition map belongs to one synchronous invalidation, never to retained state.
+  #invalidateHistory(histories?: Map<object, object>): void {
+    let next = histories?.get(this.#history);
+    if (!next) {
+      next = {};
+      histories?.set(this.#history, next);
+    }
+    this.#history = next;
+  }
+
+  clear(cause: SessionEventRowsResetCause = "close", histories?: Map<object, object>): void {
     recordSessionEventRowReset(cause, this.#wireRows.size);
     updateSessionEventRowRetention(-this.#wireRows.size, -this.#wireBytes);
     this.#wireRows.clear();
     this.#wireBytes = 0;
-    this.clearAncestors();
+    this.#rows.clear();
+    this.#chars = 0;
     // Versions survive clearing, so even an empty socket may have a different history.
-    this.#history = {};
+    this.#invalidateHistory(histories);
   }
 
-  clearAncestors(): void {
+  clearAncestors(histories?: Map<object, object>): void {
     if (this.#rows.size) {
-      this.#history = {};
+      this.#invalidateHistory(histories);
     }
     this.#rows.clear();
     this.#chars = 0;
   }
 
-  forget(key: string): void {
+  forget(key: string, histories?: Map<object, object>): void {
+    let changed = false;
     for (const [identity, row] of this.#rows) {
       if (row.key === key) {
         this.#delete(identity);
-        this.#history = {};
+        changed = true;
       }
+    }
+    if (changed) {
+      this.#invalidateHistory(histories);
     }
   }
 

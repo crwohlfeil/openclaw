@@ -636,7 +636,6 @@ type SessionEventProjectionContext = {
   ) => readonly [string | undefined, string | undefined, string | undefined] | null;
   forgetAncestors: (key?: string) => void;
   references: (client: GatewayClient) => ConnectionSessionRows;
-  forgetConnectionAncestors: (client: GatewayClient) => void;
   createRunProjector: () => VisibleActiveSessionRunProjector;
 };
 
