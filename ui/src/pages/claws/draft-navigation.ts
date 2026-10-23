@@ -14,11 +14,11 @@ export type ClawDraftTarget = {
 };
 
 export function canCreateClawDraft(context: ApplicationContext): boolean {
-  return Boolean(
+  return (
     canCallGatewayMethod(context.gateway.snapshot, "claws.drafts.create", "operator.admin") &&
     canCallGatewayMethod(context.gateway.snapshot, "chat.send", "operator.write") &&
     resolveLabFeatureState(currentConfigObject(context.runtimeConfig.state), CLAWS_LAB_FEATURE)
-      .enabled,
+      .enabled
   );
 }
 
