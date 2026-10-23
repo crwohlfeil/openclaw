@@ -160,8 +160,9 @@ await stores.within(async () => {
         iterations,
         bytesPerRun: bytes / iterations,
         allocationSamples: profile.samples.length,
-        nativeFrameBytesPerRun:
-          nativeFrameSamples.reduce((total, sample) => total + sample.size, 0) / iterations,
+        nativeFrameBytesPerRun: nativeFrameSamples.length
+          ? nativeFrameSamples.reduce((total, sample) => total + sample.size, 0) / iterations
+          : null,
         nativeFrameAllocationSamples: nativeFrameSamples.length,
         runNs,
         getStoreNs: lookups,

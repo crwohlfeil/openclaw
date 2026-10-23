@@ -461,8 +461,9 @@ entry and oldest/middle/newest lookup time separately. The consolidated variant
 enters the same owner fields through one frozen record, sharing their values.
 `nativeFrameBytesPerRun` counts samples rooted at Node's `AsyncContextFrame`
 constructor separately from total entry allocation. Pass a final profile path to
-retain the raw collected-object profile; zero native-frame samples provide no
-frame-byte estimate.
+retain the raw collected-object profile. V8 may inline that constructor out of
+sample stacks; zero native-frame samples yield a `null` frame-byte estimate,
+not evidence of zero frame allocation.
 The persistent carriers are experiments, not production context owners. These
 mechanism measurements do not establish Gateway GC or latency improvements; use
 the concurrent, swapped-core Gateway workload for acceptance.
