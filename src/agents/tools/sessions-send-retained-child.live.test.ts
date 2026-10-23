@@ -8,6 +8,8 @@ import {
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
 import { isTruthyEnvValue } from "../../infra/env.js";
+import { drainSystemEvents, peekSystemEvents } from "../../infra/system-events.js";
+import { createSessionVisibilityChecker } from "../../plugin-sdk/session-visibility.js";
 import { handleSessionStateSessionReset } from "../../sessions/session-state-events.js";
 import { readCursor } from "../../sessions/session-state-events.kernel.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
@@ -73,6 +75,58 @@ describeLive("retained native child continuation", () => {
             { key: child },
           );
           const childId = described.session.sessionId;
+          const notify = async (age: "recent" | "aged") => {
+            const marker = "NOTIFY_" + age + "_" + id;
+            const beforeMessages = await history(child);
+            const beforeRuns = [...subagentRuns.values()]
+              .filter((run) => run.childSessionKey === child)
+              .map((run) => run.runId);
+            const beforeParent = (await history(parent)).length;
+            const attempt = await start(
+              parent,
+              "Call sessions_send exactly once with " +
+                JSON.stringify({
+                  sessionKey: child,
+                  message: marker,
+                  mode: "notify",
+                }) +
+                ". Then finish with PARENT_NOTIFIED. Do not call other tools or retry.",
+            );
+            await until("parent notification completes", async () => {
+              const ended = await gateway.request<{ status: string }>("agent.wait", {
+                runId: attempt.runId,
+                timeoutMs: 1000,
+              });
+              return ended.status === "ok" ? true : undefined;
+            });
+            const sent = (await history(parent))
+              .slice(beforeParent)
+              .find(
+                (message) => message.role === "toolResult" && message.toolName === "sessions_send",
+              );
+            expect(sent?.details).toMatchObject({
+              status: "queued",
+              runStarted: false,
+              durability: "process",
+            });
+            expect(drainSystemEvents(child)).toEqual([expect.stringContaining(marker)]);
+            expect(await history(child)).toEqual(beforeMessages);
+            expect(
+              [...subagentRuns.values()]
+                .filter((run) => run.childSessionKey === child)
+                .map((run) => run.runId),
+            ).toEqual(beforeRuns);
+            record("retained-child-notify", {
+              age,
+              child,
+              childId,
+              details: sent?.details,
+              queued: true,
+              recipientRunStarted: false,
+              transcriptInputCommitted: false,
+            });
+          };
+          await notify("recent");
           // Age only temporal facts produced by the real run, not lineage or authorization.
           const old = Date.now() - 31 * 60_000;
           await mutateSubagentRuns([childRun.runId], () => ({
@@ -96,6 +150,7 @@ describeLive("retained native child continuation", () => {
             old,
             childSessions: navigation.session.childSessions,
           });
+          await notify("aged");
           const before = (await history(parent)).length;
           const followup = await start(
             parent,
@@ -245,6 +300,44 @@ describeLive("retained native child continuation", () => {
                   runId: running.runId,
                   controller: foreign,
                 });
+                const temporaryMarker = "TEMPORARY_NOTIFY_" + id;
+                const temporary = await start(
+                  foreign,
+                  "Call sessions_send exactly once with " +
+                    JSON.stringify({
+                      sessionKey: child,
+                      message: temporaryMarker,
+                      mode: "notify",
+                    }) +
+                    ". Then finish with TEMPORARY_DENIED. Do not call other tools or retry.",
+                );
+                await until("temporary controller notification is refused", async () => {
+                  const ended = await gateway.request<{ status: string }>("agent.wait", {
+                    runId: temporary.runId,
+                    timeoutMs: 1000,
+                  });
+                  return ended.status === "ok" ? true : undefined;
+                });
+                const temporarySend = (await history(foreign)).find(
+                  (message) =>
+                    message.role === "toolResult" && message.toolName === "sessions_send",
+                );
+                expect(temporarySend?.details).toMatchObject({
+                  status: "forbidden",
+                  error: expect.stringContaining(
+                    "Notifications cannot outlive an exact-session access grant",
+                  ),
+                });
+                expect(
+                  peekSystemEvents(child).some((message) => message.includes(temporaryMarker)),
+                ).toBe(false);
+                expect(JSON.stringify(await history(child))).not.toContain(temporaryMarker);
+                record("temporary-controller-notify-denied", {
+                  child,
+                  childId,
+                  details: temporarySend?.details,
+                  queued: false,
+                });
               } else {
                 const aborted = await gateway.request<{ aborted: boolean }>("chat.abort", {
                   sessionKey: parent,
@@ -301,6 +394,63 @@ describeLive("retained native child continuation", () => {
               }
             }
           }
+          const scopedSource = "agent:main:dashboard:scoped-notify-" + id;
+          const scopedMarker = "SCOPED_NOTIFY_" + id;
+          let scopedResolutions = 0;
+          using scopedGrant = {
+            [Symbol.dispose]: createSessionVisibilityChecker.registerScopedAccessProvider(
+              (request) => {
+                if (
+                  request.action === "send" &&
+                  request.requesterSessionKey === scopedSource &&
+                  request.targetSessionKey === child
+                ) {
+                  scopedResolutions++;
+                  return { expectedSessionId: childId };
+                }
+                return undefined;
+              },
+            ),
+          };
+          const scopedAttempt = await start(
+            scopedSource,
+            "Call sessions_send exactly once with " +
+              JSON.stringify({
+                sessionKey: child,
+                message: scopedMarker,
+                mode: "notify",
+              }) +
+              ". Then finish with SCOPED_DENIED. Do not call other tools or retry.",
+          );
+          await until("scoped-only notification is refused", async () => {
+            const ended = await gateway.request<{ status: string }>("agent.wait", {
+              runId: scopedAttempt.runId,
+              timeoutMs: 1000,
+            });
+            return ended.status === "ok" ? true : undefined;
+          });
+          const scopedSend = (await history(scopedSource)).find(
+            (message) => message.role === "toolResult" && message.toolName === "sessions_send",
+          );
+          expect(scopedResolutions).toBeGreaterThan(0);
+          expect(scopedSend?.details).toMatchObject({
+            status: "forbidden",
+            error: expect.stringContaining(
+              "Notifications cannot outlive an exact-session access grant",
+            ),
+          });
+          expect(peekSystemEvents(child).some((message) => message.includes(scopedMarker))).toBe(
+            false,
+          );
+          expect(JSON.stringify(await history(child))).not.toContain(scopedMarker);
+          record("scoped-notify-denied", {
+            child,
+            childId,
+            details: scopedSend?.details,
+            scopedResolutions,
+            queued: false,
+          });
+          scopedGrant[Symbol.dispose]();
           const watchedReply = "WATCHED_" + id;
           const beforeWatch = (await history(parent)).length;
           const watchedAttempt = await start(

@@ -192,6 +192,12 @@ describe.runIf("__vitest_browser__" in globalThis)("sidebar agent menu layout", 
     expect(document.activeElement).toBe(settings);
     expect(settings.hasAttribute("title")).toBe(false);
     expect(getComputedStyle(settings).opacity).toBe("1");
+    const { registerEnglishCatalog } = await import("../lib/reactive/i18n.ts");
+    // A newly opened lazy view can install its catalog while this menu is focused.
+    registerEnglishCatalog(() => {});
+    await sidebar.updateComplete;
+    expect(query(tiles[2]!, ".sidebar-agent-menu__settings")).toBe(settings);
+    expect(document.activeElement).toBe(settings);
     await userEvent.keyboard("{ArrowDown}");
     expect(document.activeElement).toBe(tiles[3]);
     expect(getComputedStyle(settings).opacity).toBe("0");
@@ -224,8 +230,13 @@ describe.runIf("__vitest_browser__" in globalThis)("sidebar agent menu layout", 
     await expect.poll(() => document.activeElement).toBe(all);
     expect(all?.getAttribute("aria-current")).toBe("true");
     await userEvent.keyboard("{ArrowDown}");
-    expect(document.activeElement).toBe(sidebar.querySelector('[data-value="agent:main"]'));
+    await expect
+      .poll(() => document.activeElement)
+      .toBe(sidebar.querySelector('[data-value="agent:main"]'));
     await userEvent.keyboard("{ArrowDown}");
+    await expect
+      .poll(() => document.activeElement)
+      .toBe(sidebar.querySelector('[data-value="agent:release"]'));
     await userEvent.tab();
     const releaseSettings = sidebar.querySelector<HTMLButtonElement>(
       '[data-value="agent:release"] .sidebar-agent-menu__settings',

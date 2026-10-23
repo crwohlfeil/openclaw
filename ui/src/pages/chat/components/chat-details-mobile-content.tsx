@@ -8,6 +8,7 @@ import {
 import { Icon } from "../../../components/solid/icon.tsx";
 import { registerChatSessionEnglish } from "../../../i18n/locales/en-chat-session.ts";
 import { registerEnglishCatalog, t } from "../../../lib/reactive/i18n.ts";
+import { resolveSessionDisplayName } from "../../../lib/session-display.ts";
 import { listSubagents } from "../chat-subagent-wait.ts";
 import {
   SessionAutomationMobileList,
@@ -15,10 +16,7 @@ import {
 } from "./chat-automation-mobile.tsx";
 import { getContextNoticeViewModel } from "./chat-composer-context.tsx";
 import { ChatDetailsContextContent, ChatDetailsContextSummary } from "./chat-details-context.tsx";
-import {
-  ChatDetailsEnvironmentMobile,
-  type ChatDetailsEnvironmentMobileProps,
-} from "./chat-details-environment-mobile.tsx";
+import { ChatDetailsEnvironmentMobile } from "./chat-details-environment-mobile.tsx";
 import { ChatDetailsGoal, type ChatDetailsGoalProps } from "./chat-details-goal.tsx";
 import {
   ChatDetailsMobileProcesses,
@@ -91,8 +89,6 @@ type ChatDetailsMobileRootContent = {
     | "taskProgressNotice"
     | "automations"
   >;
-  /** Review's Uncommitted snapshot and the host's actual navigation callbacks. */
-  environment?: Omit<ChatDetailsEnvironmentMobileProps, "details" | "presented">;
   /** Labels only; facts/actions/demand come from the native details.outputs binding. */
   outputs?: { label: string };
   /** The native Sharing adapter, constructed under the retained session host. */
@@ -250,6 +246,10 @@ function MobileRoot(
     <ChatDetailsMobileRoot
       {...props.content.entries}
       presented={props.presented}
+      sessionTitle={resolveSessionDisplayName(
+        props.details.selectedSession?.key ?? "",
+        props.details.selectedSession,
+      )}
       taskProgress={
         progress()?.counts || progressNote()
           ? {
@@ -284,7 +284,7 @@ function MobileRoot(
       automations={automations()}
       environment={
         <ChatDetailsEnvironmentMobile
-          {...(props.content.environment ?? props.details.environment)}
+          {...props.details.environment}
           details={props.details}
           presented={props.presented}
         />
