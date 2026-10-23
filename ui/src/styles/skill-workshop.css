@@ -43,7 +43,7 @@
 .sw-layout {
   display: grid;
   grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr);
-  align-items: start;
+  align-items: stretch;
   gap: var(--space-5);
 }
 
@@ -51,6 +51,11 @@
 .sw-detail {
   min-width: 0;
   overflow: hidden;
+}
+
+.sw-layout > .sw-detail {
+  display: flex;
+  flex-direction: column;
 }
 
 .sw-list__head {
@@ -301,11 +306,15 @@
 }
 
 .sw-detail__body {
+  flex: 1;
+  min-height: 70vh;
+  /* Let the list size the desktop row instead of the full instruction document. */
+  contain: size;
+  overflow: auto;
   padding: var(--space-4) var(--space-5) var(--space-5);
 }
 
 .sw-markdown {
-  max-height: 70vh;
   overflow: auto;
   overflow-wrap: anywhere;
 }
@@ -367,7 +376,6 @@
 .sw-diff__lines,
 .sw-file {
   margin: 0;
-  max-height: 70vh;
   overflow: auto;
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
@@ -560,5 +568,12 @@
   .sw-layout,
   .sw-files {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sw-detail__body {
+    flex: none;
+    min-height: 0;
+    max-height: 70vh;
+    contain: none;
   }
 }
