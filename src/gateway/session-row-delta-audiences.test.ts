@@ -42,19 +42,22 @@ it("preserves shared ancestor references across staggered roster reads and first
     await initializeSessionReadContext(context);
     const projection = getSessionRowProjection(context)!;
     const detach = connection.attachSessionRowProjection(projection);
-    const peers = Array.from({ length: 4 }, (_, index) => {
-      const peer = createSessionRowEventPeer(profile, `polling-${index}`, 1);
-      peer.client.connect.caps = ["session-row-deltas"];
-      if (index >= 2) {
-        peer.client.connect.caps.push("session-event-field-refs");
-      }
+    const addPeer = (id: string, caps: string[]) => {
+      const peer = createSessionRowEventPeer(profile, id, 1);
+      peer.client.connect.caps = caps;
       connection.clients.add(peer.client);
       connection.sessionEventSubscribers.subscribe(peer.client.connId);
       const decoder = new GatewayChatEvents(() => {
         throw new Error("Unexpected missing row baseline");
       });
       return Object.assign(peer, { decoder });
-    });
+    };
+    const peers = Array.from({ length: 4 }, (_, index) =>
+      addPeer(`polling-${index}`, [
+        "session-row-deltas",
+        ...(index >= 2 ? ["session-event-field-refs"] : []),
+      ]),
+    );
     const publish = () =>
       connection.broadcastToConnIds(
         "sessions.changed",
@@ -63,22 +66,30 @@ it("preserves shared ancestor references across staggered roster reads and first
       );
     const frameFor = (peer: (typeof peers)[number]) =>
       JSON.parse(peer.send.mock.lastCall![0]) as EventFrame;
-    const publishAndCountRowEncodings = () => {
+    const publishAndCountEncodings = () => {
       const stringify = JSON.stringify;
+      const previousSends = peers.map((peer) => peer.send.mock.calls.length);
       let rowEncodings = 0;
+      let payloadEncodings = 0;
       const encoding = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
         const value: unknown = args[0];
         if (isRecord(value) && value.key === child && typeof value.version === "number") {
           rowEncodings++;
         }
+        if (isRecord(value) && isRecord(value.payload) && value.payload.sessionKey === child) {
+          payloadEncodings++;
+        }
         return stringify(...args);
       });
       try {
         publish();
-        return rowEncodings;
       } finally {
         encoding.mockRestore();
       }
+      for (const [index, peer] of peers.entries()) {
+        expect(peer.send).toHaveBeenCalledTimes(previousSends[index]! + 1);
+      }
+      return { rowEncodings, payloadEncodings };
     };
     try {
       publish();
@@ -109,7 +120,7 @@ it("preserves shared ancestor references across staggered roster reads and first
         );
         expect(result.sessions.map((row) => row.key)).toEqual([child]);
         // One row comparison and one encoding per wire variant, independent of socket count.
-        expect(publishAndCountRowEncodings()).toBeLessThanOrEqual(4);
+        expect(publishAndCountEncodings().rowEncodings).toBeLessThanOrEqual(4);
         for (const peer of peers) {
           const frame = frameFor(peer);
           expect(frame.payload).toMatchObject({
@@ -137,13 +148,38 @@ it("preserves shared ancestor references across staggered roster reads and first
         peer.decoder.dispatch(frameFor(peer));
       }
       // A shared fact change must not permanently split otherwise equal socket histories.
-      expect(publishAndCountRowEncodings()).toBeLessThanOrEqual(4);
+      expect(publishAndCountEncodings().rowEncodings).toBeLessThanOrEqual(4);
       for (const peer of peers) {
         let decoded: EventFrame | undefined;
         peer.decoder.dispatch(frameFor(peer), (event) => {
           decoded = event;
         });
         expect(decoded?.payload).toMatchObject({
+          ancestorSessions: [{ key: parent, label: "Renamed parent" }],
+        });
+      }
+      const legacy = Array.from({ length: 4 }, (_, index) => addPeer(`legacy-${index}`, []));
+      peers.push(...legacy);
+      publish();
+      for (const peer of peers) {
+        peer.decoder.dispatch(frameFor(peer));
+      }
+      for (const peer of legacy) {
+        await listSessions({
+          client: peer.client,
+          context,
+          request: { agentId: "main", limit: 1 },
+        });
+      }
+      // Empty legacy histories can share one payload after independent roster reads.
+      expect(publishAndCountEncodings().payloadEncodings).toBeLessThanOrEqual(3);
+      for (const peer of legacy) {
+        let decoded: EventFrame | undefined;
+        peer.decoder.dispatch(frameFor(peer), (event) => {
+          decoded = event;
+        });
+        expect(decoded?.payload).toMatchObject({
+          session: { key: child, label: "Child" },
           ancestorSessions: [{ key: parent, label: "Renamed parent" }],
         });
       }

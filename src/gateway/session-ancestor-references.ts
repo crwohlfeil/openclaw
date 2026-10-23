@@ -85,6 +85,10 @@ export class ConnectionSessionRows {
 
   // One transition map belongs to one synchronous invalidation, never to retained state.
   #invalidateHistory(histories?: Map<object, object>): void {
+    if (this.#version === 0 && this.#rows.size === 0) {
+      this.#history = EMPTY_HISTORY;
+      return;
+    }
     let next = histories?.get(this.#history);
     if (!next) {
       next = {};
@@ -106,10 +110,10 @@ export class ConnectionSessionRows {
 
   clearAncestors(histories?: Map<object, object>): void {
     if (this.#rows.size) {
+      this.#rows.clear();
+      this.#chars = 0;
       this.#invalidateHistory(histories);
     }
-    this.#rows.clear();
-    this.#chars = 0;
   }
 
   forget(key: string, histories?: Map<object, object>): void {
