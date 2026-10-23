@@ -443,19 +443,26 @@ and the optional `--revision` label.
 ## Async context allocation
 
 `async-store-measure.mjs` compares Node's native runner, the shared single-copy
-runner, and experimental parent-linked or indexed carriers. Run on an approved
-benchmark host with Node 26; it imports only the production helper and Node built-ins:
+runner, the consolidated production context fields, and experimental parent-linked
+or indexed carriers. Run on an approved benchmark host with Node 26:
 
 ```sh
-node scripts/perf/async-store-measure.mjs stock 26 200000
-node scripts/perf/async-store-measure.mjs single 26 200000
-node scripts/perf/async-store-measure.mjs linked 26 200000
-node scripts/perf/async-store-measure.mjs slots 26 200000
+node --import ./scripts/tsx.mjs scripts/perf/async-store-measure.mjs stock 26 200000
+node --import ./scripts/tsx.mjs scripts/perf/async-store-measure.mjs single 26 200000
+node --import ./scripts/tsx.mjs scripts/perf/async-store-measure.mjs consolidated 26 200000
+node --import ./scripts/tsx.mjs scripts/perf/async-store-measure.mjs linked 26 200000
+node --import ./scripts/tsx.mjs scripts/perf/async-store-measure.mjs slots 26 200000
 ```
 
 Repeat for 1, 8, 10, 20, 26, and 40 outer stores. Each invocation starts in a fresh
 process, warms 20,000 entries, samples collected allocations at 512-byte intervals,
-then measures unprofiled entry and oldest/middle/newest lookup time separately.
+reports bytes per entry with allocation sample counts, then measures unprofiled
+entry and oldest/middle/newest lookup time separately. The consolidated variant
+enters the same owner fields through one frozen record, sharing their values.
+`nativeFrameBytesPerRun` counts samples rooted at Node's `AsyncContextFrame`
+constructor separately from total entry allocation. Pass a final profile path to
+retain the raw collected-object profile; zero native-frame samples provide no
+frame-byte estimate.
 The persistent carriers are experiments, not production context owners. These
 mechanism measurements do not establish Gateway GC or latency improvements; use
 the concurrent, swapped-core Gateway workload for acceptance.
@@ -837,6 +844,66 @@ participate in normal recovery; their next attempt is delayed one day from the
 reference time. Generate a fresh fixture for each startup comparison. Cron jobs,
 heartbeats, channels, plugins, browser automation and network discovery are
 disabled so this workload does not call models or external integrations.
+
+## Census native async-context frame copies
+
+`async-context-probe.cjs` attributes native `AsyncLocalStorage` frame copies to
+store construction sites. Use it only in an isolated synthetic Gateway on the
+authorized benchmark host, under that host's resource limits and production
+guard. It validates the runtime's private `AsyncContextFrame` Map representation
+at startup and fails clearly if unavailable; Node 26.12 is the campaign runtime.
+Load it before Gateway modules so CommonJS and ESM imports receive the tracked
+constructor. Existing stores appear as `untracked`.
+
+For a synthetic channel-and-tool workload, first prepare the private QA runtime
+as described in [the channel-turn benchmark](../bench-channel-turn.md). From the
+checkout root, create a task-owned entry wrapper and pass it to the harness:
+
+```sh
+mkdir -p .local/async-context-probe
+cat > .local/async-context-probe/entry.mjs <<'EOF'
+import { fileURLToPath } from "node:url";
+process.env.OPENCLAW_ASYNC_CONTEXT_PROBE_OUT = fileURLToPath(
+  new URL("./census.json", import.meta.url),
+);
+await import("../../scripts/perf/async-context-probe.cjs");
+const entry = new URL("../../src/entry.ts", import.meta.url);
+process.argv[1] = fileURLToPath(entry);
+await import(entry.href);
+EOF
+node --import ./scripts/tsx.mjs scripts/bench-channel-turn.mts \
+  --entry .local/async-context-probe/entry.mjs --tool-args-chars 4096
+```
+
+Set probe options inside the wrapper because harnesses sanitize child environments.
+`OPENCLAW_ASYNC_CONTEXT_PROBE_OUT` is required and its parent directory must exist.
+`OPENCLAW_ASYNC_CONTEXT_PROBE_SAMPLE_EVERY` defaults to 8 (approximately one in
+eight copies; 1 samples all), and `OPENCLAW_ASYNC_CONTEXT_PROBE_INTERVAL_MS`
+defaults to 30000. The JSON file is replaced atomically at startup, each interval,
+and normal process exit. Forced termination can lose the final partial interval.
+Use separate wrappers/output paths for baseline and candidate; do not add this
+preload to `NODE_OPTIONS`, which would also instrument children and workers.
+
+`copies` counts native `enterWith` calls, including restorations: native `run`
+copies twice when changing a value, while `runWithAsyncStore` copies once. Sampling
+uses a fixed pseudorandom sequence to avoid always selecting the restoration half.
+`samples`, `frameSizeHistogram`, and `meanFrameEntries` describe the **source**
+frame being copied, including entries whose value is undefined. `meanActiveEntries`
+counts non-undefined values; it makes no claim about their authority or liveness.
+`owners` ranks construction sites by sampled entry presence, with separate active
+and undefined counts. Several stores created at one site can appear in one frame,
+so `entriesPerSample` is a mean count, not a presence probability. `enteringOwners`
+records exact copy counts and sampled source-frame weights for the store issuing
+each copy. Sort `owners` by `active` or `undefined` to inspect those contributions.
+Only code locations and numeric counts are retained; store values are never logged.
+
+This example includes startup plus one cold and ten warm synthetic turns. Record
+the harness's completed turns alongside the census; a failed or shortened workload
+does not give comparable counts. The same wrapper works with a longer `--entry`
+harness for tools/subagents or with `idle-gateway-measure.ts` for an offline
+team-shape fixture. These are instrumented work counts, not measured frame bytes,
+allocation, promotion, GC, or latency. Run allocation profiling and uninstrumented
+acceptance pairs separately with matched workloads and runtime versions.
 
 ## Measure idle Gateway allocation and timer work
 
