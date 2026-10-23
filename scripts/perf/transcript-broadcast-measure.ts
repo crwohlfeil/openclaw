@@ -70,6 +70,7 @@ const { values } = parseArgs({
     "workload-cpu-profile": { type: "boolean", default: false },
     "capture-responses": { type: "boolean", default: false },
     "trace-gc": { type: "boolean", default: false },
+    "no-inlining": { type: "boolean", default: false },
     "worker-memory": { type: "boolean", default: false },
     "baseline-owners": { type: "boolean", default: false },
     "stress-tools": { type: "boolean", default: false },
@@ -3453,6 +3454,7 @@ try {
     values.entry,
     port,
     [
+      ...(values["no-inlining"] ? ["--no-turbo-inlining", "--no-maglev-inlining"] : []),
       ...(values.allocations || values["stream-start-allocations"] || values["trace-gc"]
         ? ["--trace-gc-nvp"]
         : []),
@@ -5015,6 +5017,7 @@ try {
     cpuProfile: values["cpu-profile"],
     workloadCpuProfile: values["workload-cpu-profile"],
     captureResponses: values["capture-responses"],
+    inliningDisabled: values["no-inlining"],
     traceGc: values["trace-gc"] || values.allocations || values["stream-start-allocations"],
     streamStartDiagnostics: values["stream-start-diagnostics"],
     streamStartAllocations: values["stream-start-allocations"],

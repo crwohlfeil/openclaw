@@ -92,6 +92,7 @@ if (isMainThread) {
         "session-sharing-read.ts",
         "session-utils-list.ts",
         "session-ancestor-references.ts",
+        "server-broadcast.ts",
         "server-connection-state.ts",
         "server-methods/sessions-read.ts",
       ]) {
@@ -160,10 +161,16 @@ if (isMainThread) {
         const projectionSource = projectionSources.get(url);
         if (sessionProjectionCounts && url === projectionOwner) {
           let source = projectionSource ?? readFileSync(new URL(url), "utf8");
+          // Frozen baselines return a recipient envelope; current owners return a shared variant.
+          const sharedVariants = source.includes("      return projected;");
+          const deliveryReturn = sharedVariants
+            ? "      return projected;"
+            : "      return {\n        payload: wirePayload,";
+          const deliveredPayload = sharedVariants ? "projected.payload" : "wirePayload";
           const replacements = [
             [
               "    const audiences = new Map<",
-              `    const benchmarkProjectionPayloads = new Set<object>();
+              `    const benchmarkProjectionPayloads = new Set<unknown>();
     benchmarkSessionProjectionChannel.publish({ operation: event, publications: 1 });
     const audiences = new Map<`,
             ],
@@ -178,15 +185,14 @@ if (isMainThread) {
         benchmarkSessionProjectionChannel.publish({ operation: event, payloadCacheMisses: 1 });`,
             ],
             [
-              "      return {\n        payload: wirePayload,",
+              deliveryReturn,
               `      benchmarkSessionProjectionChannel.publish({
         operation: event,
         projectedRecipients: 1,
-        wirePayloads: benchmarkProjectionPayloads.has(wirePayload) ? 0 : 1,
+        wirePayloads: benchmarkProjectionPayloads.has(${deliveredPayload}) ? 0 : 1,
       });
-      benchmarkProjectionPayloads.add(wirePayload);
-      return {
-        payload: wirePayload,`,
+      benchmarkProjectionPayloads.add(${deliveredPayload});
+${deliveryReturn}`,
             ],
           ] as const;
           for (const [anchor, replacement] of replacements) {
@@ -203,14 +209,14 @@ ${source}`;
           sessionProjectionCountsInstalled = true;
           return { ...loaded, format: "module-typescript", source };
         }
-        if (projectionSource !== undefined) {
+        if (projectionSource !== undefined && url !== owner) {
           // Preserve canonical imports and original TypeScript lines in sampled stacks.
           return { ...loaded, format: "module-typescript", source: projectionSource };
         }
         if (url !== owner) {
           return loaded;
         }
-        let source = readFileSync(new URL(url), "utf8");
+        let source = projectionSource ?? readFileSync(new URL(url), "utf8");
         // Native source preserves the broadcaster's name in allocation profiles without a timer.
         if (!broadcastTiming) {
           return { ...loaded, format: "module-typescript", source };

@@ -2944,12 +2944,12 @@ equally configured comparisons.
 
 For session-projection comparisons from one installed checkout, add
 `--entry src/entry.ts --session-projection-source <directory>` to both arms.
-The directory must contain all seven coherent owner files:
+The directory must contain all eight coherent owner files:
 `session-event-projection.ts`, `session-row-presentation.ts`,
 `session-sharing-read.ts`, `session-utils-list.ts`, `session-ancestor-references.ts`,
-`server-connection-state.ts`, and `server-methods/sessions-read.ts`. Put their original
+`server-broadcast.ts`, `server-connection-state.ts`, and `server-methods/sessions-read.ts`. Put their original
 revision's files in a baseline directory and use `--session-projection-source
-src/gateway` for the candidate. The preload reads all seven before Gateway startup
+src/gateway` for the candidate. The preload reads all eight before Gateway startup
 and fails on a missing file; it substitutes raw TypeScript while retaining canonical
 module URLs, relative imports, and source line numbers. The report records the
 resolved `sessionProjectionSource`. It also loads the canonical broadcaster as
@@ -2957,6 +2957,12 @@ native TypeScript so its function name remains visible in allocation profiles
 without installing the timer. Use separate fixtures and ports with matching
 workload flags. Collect allocation and broadcast-timing comparisons in separate
 passes so the timing observer's allocations do not enter the broadcast profile.
+
+For a separate allocation-attribution diagnostic, add `--no-inlining`. It starts
+the Gateway with V8's `--no-turbo-inlining --no-maglev-inlining` flags and records
+`inliningDisabled` in the result, preserving source-owner call boundaries in
+sampled stacks. Keep these diagnostic results separate from acceptance pairs,
+which run with normal inlining.
 
 Use a separate `--session-projection-counts --entry src/entry.ts` pass to count
 audience cache misses, payload cache misses, successful recipient projections,

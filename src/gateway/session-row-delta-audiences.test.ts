@@ -1,4 +1,5 @@
-import { expect, it } from "vitest";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { expect, it, vi } from "vitest";
 import type { EventFrame } from "../../packages/gateway-protocol/src/index.js";
 import { GatewayChatEvents } from "../../ui/src/api/gateway-chat-events.ts";
 import { replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
@@ -90,7 +91,22 @@ it("preserves shared ancestor references across staggered roster reads and first
           { agentId: "main", limit: 1 },
         );
         expect(result.sessions.map((row) => row.key)).toEqual([child]);
-        publish();
+        const stringify = JSON.stringify;
+        let rowEncodings = 0;
+        const encoding = vi.spyOn(JSON, "stringify").mockImplementation((...args) => {
+          const value: unknown = args[0];
+          if (isRecord(value) && value.key === child && typeof value.version === "number") {
+            rowEncodings++;
+          }
+          return stringify(...args);
+        });
+        try {
+          publish();
+        } finally {
+          encoding.mockRestore();
+        }
+        // One row comparison and one encoding per wire variant, independent of socket count.
+        expect(rowEncodings).toBeLessThanOrEqual(4);
         for (const peer of peers) {
           const frame = frameFor(peer);
           expect(frame.payload).toMatchObject({
