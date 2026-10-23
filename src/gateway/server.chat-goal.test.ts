@@ -182,7 +182,13 @@ async function useFreshSessionStore() {
 }
 
 async function rpc(
-  method: "chat.send" | "chat.history" | "chat.abort" | "sessions.abort" | "sessions.goal.update",
+  method:
+    | "chat.send"
+    | "chat.history"
+    | "chat.abort"
+    | "sessions.abort"
+    | "sessions.goal.update"
+    | "users.setRole",
   params: Record<string, unknown>,
   onResponse?: RespondFn,
   requestClient: GatewayClient = client,
@@ -311,7 +317,7 @@ function holdGoalReceipt() {
 
 describe("Goal chat admission and continuation", () => {
   registerGoalAutomaticContinuationCases(scope, runEmbeddedAgent, rpc, goalStart, userMessages);
-  registerGoalReplacementCases(scope, runEmbeddedAgent, rpc, goalStart, () => context);
+  registerGoalReplacementCases(scope, runEmbeddedAgent, rpc, goalStart, () => context, client);
 
   registerGoalChatRestartSettlementCase({
     scope,
