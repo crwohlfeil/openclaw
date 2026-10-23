@@ -67,7 +67,8 @@ function readEnabledFromParent(feature: LabFeatureDefinition, parent: unknown): 
   if (!isRecord(parent) || !key) {
     return false;
   }
-  return feature.activeValues.includes(parent[key] as LabFeatureValue);
+  const value = parent[key];
+  return feature.activeValues.some((active) => active === value);
 }
 
 export function labFeatureOverridePath(
