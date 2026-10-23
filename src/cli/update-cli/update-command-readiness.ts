@@ -137,7 +137,12 @@ export async function verifyPreviousGatewayForUpdate(params: {
         return false;
       }
       progress("installation", "checking service command ownership of the previous installation");
-      const servesPreviousPackage = await gatewayServiceCommandUsesRoot({ root: params.root, env });
+      // Service inspection may invoke a native manager command. Bind that command and
+      // its cleanup to the same absolute readiness deadline so a wedged manager cannot
+      // keep the updater alive after the verification budget expires.
+      const servesPreviousPackage = await deadline.run(() =>
+        gatewayServiceCommandUsesRoot({ root: params.root, env }),
+      );
       assertCurrent();
       return Boolean(
         expectedVersion &&

@@ -10,6 +10,7 @@ import {
 } from "../../infra/update-run-ledger.js";
 import { toPublicUpdateRun } from "../../infra/update-run-record.js";
 import { renderUpdateRunReport } from "../../infra/update-run-report.js";
+import { resolveCommandProcessSignal } from "../../process/exec-spawn.js";
 import { defaultRuntime } from "../../runtime.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { verifyPreviousGatewayForUpdate } from "./update-command-readiness.js";
@@ -17,6 +18,7 @@ import { verifyPreviousGatewayForUpdate } from "./update-command-readiness.js";
 const native = vi.hoisted(() => ({
   runtime: vi.fn<GatewayService["readRuntime"]>(),
   command: vi.fn(),
+  ownership: vi.fn(),
   reachable: vi.fn(),
   http: vi.fn<typeof import("../daemon-cli/restart-health-probe.js").waitForGatewayHttpReadiness>(),
 }));
@@ -68,7 +70,7 @@ vi.mock("../daemon-cli/restart-health-probe.js", () => ({
 }));
 vi.mock("./update-command-service-plan.js", () => ({
   resolveUpdatedGatewayRestartPort: async () => 18789,
-  gatewayServiceCommandUsesRoot: async () => true,
+  gatewayServiceCommandUsesRoot: native.ownership,
 }));
 
 const dirs = useAutoCleanupTempDirTracker(afterEach);
@@ -108,6 +110,7 @@ beforeEach(() => {
     }
     return { stdout, stderr: "", code: 0 };
   });
+  native.ownership.mockReset().mockResolvedValue(true);
   vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
   vi.spyOn(defaultRuntime, "error").mockImplementation(() => {});
 });
@@ -306,6 +309,46 @@ describe("managed Windows update after the startup canary", () => {
     expect(warning?.detail).toMatch(/openclaw gateway status/);
     expect(f.read().status).toBe("running");
     expect(renderUpdateRunReport(f.read()).markdown).toContain(warning?.detail);
+  });
+
+  it("stops and joins a held service ownership probe when the readiness budget expires", async () => {
+    const f = fixture();
+    let observedSignal: AbortSignal | undefined;
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    native.reachable.mockResolvedValueOnce({
+      ...unreachable,
+      reachable: true,
+      gatewayVersion: "2026.9.5",
+      gatewayBootId: "previous-gateway-boot",
+      probeError: undefined,
+    });
+    native.ownership.mockImplementationOnce(async () => {
+      observedSignal = resolveCommandProcessSignal();
+      if (!observedSignal) {
+        throw new Error("service ownership probe did not inherit the readiness deadline");
+      }
+      markEntered();
+      await new Promise<void>((resolve) => {
+        observedSignal!.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return true;
+    });
+
+    const pending = verifyPreviousGatewayForUpdate({ ...f.params, timeoutMs: 1_000 });
+    await entered;
+    await Promise.all([expect(pending).resolves.toBe(false), vi.advanceTimersByTimeAsync(1_000)]);
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(native.ownership).toHaveBeenCalledTimes(1);
+    expect(f.read().steps).toContainEqual(
+      expect.objectContaining({
+        step: "warning:previous gateway verification",
+        status: "completed",
+      }),
+    );
   });
 
   it.each(["cancellation", "execution ownership loss"])(
